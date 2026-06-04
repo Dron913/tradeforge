@@ -1,0 +1,340 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-6);
+}
+
+.assetPanel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  transition: all var(--transition-fast);
+}
+
+.assetPanel:hover {
+  border-color: var(--border-default);
+  box-shadow: var(--shadow-lg);
+}
+
+.panelHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-5);
+  background: var(--bg-hover);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.assetInfo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.assetIcon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.assetIcon.btc {
+  background: rgba(246, 147, 26, 0.2);
+  color: #F7931A;
+}
+
+.assetIcon.eth {
+  background: rgba(98, 126, 234, 0.2);
+  color: #627EEA;
+}
+
+.assetIcon.sol {
+  background: rgba(0, 255, 163, 0.2);
+  color: #00FFA3;
+}
+
+.assetName {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.assetFullName {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.priceInfo {
+  text-align: right;
+}
+
+.price {
+  font-family: var(--font-mono);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.change {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  justify-content: flex-end;
+}
+
+.change.up {
+  color: var(--profit);
+}
+
+.change.down {
+  color: var(--loss);
+}
+
+.liveIndicator {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--profit);
+}
+
+.liveDot {
+  width: 6px;
+  height: 6px;
+  background: var(--profit);
+  border-radius: 50%;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.chartSection {
+  padding: var(--space-5);
+  background: var(--bg-primary);
+}
+
+.chartContainer {
+  height: 200px;
+}
+
+.metricsSection {
+  padding: var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.metricsTitle {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: var(--space-4);
+}
+
+metricsGrid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.metricRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) 0;
+}
+
+.metricRow + .metricRow {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.metricLabel {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.metricBarContainer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 50%;
+}
+
+.metricBar {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-interactive);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.metricBarFill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  transition: width var(--transition-slow);
+}
+
+.metricBarFill.high {
+  background: linear-gradient(90deg, var(--profit-dim), var(--profit));
+}
+
+.metricBarFill.medium {
+  background: linear-gradient(90deg, var(--accent-cyan-dim), var(--accent-cyan));
+}
+
+.metricBarFill.low {
+  background: linear-gradient(90deg, var(--warning-dim), var(--warning));
+}
+
+.metricBarFill.risk {
+  background: linear-gradient(90deg, var(--profit-dim), var(--loss));
+}
+
+.metricValue {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 40px;
+  text-align: right;
+}
+
+.tradeReadyBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.tradeReadyBadge.ready {
+  background: var(--profit-bg);
+  color: var(--profit);
+}
+
+.tradeReadyBadge.waiting {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.panelFooter {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-4) var(--space-5);
+  background: var(--bg-hover);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.additionalMetrics {
+  display: flex;
+  gap: var(--space-6);
+}
+
+.addMetric {
+  text-align: center;
+}
+
+.addMetricLabel {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-bottom: var(--space-1);
+}
+
+.addMetricValue {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@media (max-width: 1280px) {
+  .grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 1024px) {
+  .grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-4);
+  }
+}
+
+@media (max-width: 768px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .panelHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-3);
+  }
+
+  .priceInfo {
+    text-align: left;
+  }
+
+  .chartContainer {
+    height: 160px;
+  }
+
+  .additionalMetrics {
+    flex-wrap: wrap;
+    gap: var(--space-4);
+  }
+
+  .panelFooter {
+    flex-direction: column;
+    gap: var(--space-3);
+    align-items: flex-start;
+  }
+
+  .metricLabel {
+    min-width: 100px;
+  }
+}
+
+@media (max-width: 480px) {
+  .grid {
+    gap: var(--space-3);
+  }
+
+  .assetIcon {
+    width: 32px;
+    height: 32px;
+  }
+
+  .assetName {
+    font-size: var(--text-base);
+  }
+
+  .price {
+    font-size: var(--text-lg);
+  }
+
+  .chartContainer {
+    height: 140px;
+  }
+}

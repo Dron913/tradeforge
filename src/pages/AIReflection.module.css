@@ -1,0 +1,434 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.reflectionGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-6);
+}
+
+.reflectionCard {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  transition: all var(--transition-fast);
+}
+
+.reflectionCard:hover {
+  border-color: var(--border-default);
+  box-shadow: var(--shadow-md);
+}
+
+.reflectionCard.inProgress {
+  border-color: var(--warning);
+  box-shadow: 0 0 0 1px var(--warning);
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-5);
+  background: var(--bg-hover);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.reflectionId {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.statusBadge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  text-transform: uppercase;
+}
+
+.statusBadge.completed {
+  background: var(--profit-bg);
+  color: var(--profit);
+}
+
+.statusBadge.inProgress {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.cardBody {
+  padding: var(--space-5);
+}
+
+.timing {
+  display: flex;
+  gap: var(--space-6);
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.timingItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.timingLabel {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.timingValue {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.hypothesesSection {
+  margin-bottom: var(--space-5);
+}
+
+.sectionTitle {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.hypothesisCard {
+  padding: var(--space-3);
+  background: var(--bg-interactive);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
+}
+
+.hypothesisCard:last-child {
+  margin-bottom: 0;
+}
+
+.hypothesisHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.hypothesisText {
+  flex: 1;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.confidenceBadge {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  color: var(--text-muted);
+}
+
+.outcomeBadge {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.outcomeBadge.accepted {
+  background: var(--profit-bg);
+  color: var(--profit);
+}
+
+.outcomeBadge.rejected {
+  background: var(--loss-bg);
+  color: var(--loss);
+}
+
+.hypothesisFooter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.impactBadge {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.impactBadge.positive {
+  color: var(--profit);
+}
+
+.impactBadge.negative {
+  color: var(--loss);
+}
+
+.impactBadge.neutral {
+  color: var(--text-muted);
+}
+
+.insightsSection {
+  margin-bottom: var(--space-5);
+}
+
+.insightsList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.insightItem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  padding: var(--space-2);
+  background: var(--bg-interactive);
+  border-radius: var(--radius-sm);
+}
+
+.insightBullet {
+  width: 6px;
+  height: 6px;
+  background: var(--accent-cyan);
+  border-radius: 50%;
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+
+.changesSection {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.changesList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.changeChip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--accent-cyan-glow);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+
+.changeChip .param {
+  color: var(--text-secondary);
+}
+
+.changeChip .arrow {
+  color: var(--text-muted);
+}
+
+.changeChip .value {
+  color: var(--accent-cyan);
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+.activeReflection {
+  background: var(--bg-elevated);
+  border: 2px solid var(--warning);
+  border-radius: var(--radius-xl);
+  padding: var(--space-6);
+  position: relative;
+  overflow: hidden;
+}
+
+.activeReflection::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--warning), var(--accent-cyan));
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+.activeReflectionHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-4);
+}
+
+.activeReflectionTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.activeBadge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--warning);
+}
+
+.progressBar {
+  height: 8px;
+  background: var(--bg-interactive);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  margin-top: var(--space-4);
+}
+
+.progressFill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--warning), var(--accent-cyan));
+  border-radius: var(--radius-full);
+  animation: progress 3s ease-in-out infinite;
+}
+
+.analysisStatus {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+}
+
+.statusItem {
+  text-align: center;
+  padding: var(--space-3);
+  background: var(--bg-interactive);
+  border-radius: var(--radius-md);
+}
+
+.statusItemLabel {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-bottom: var(--space-1);
+}
+
+.statusItemValue {
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes shimmer {
+  0% { opacity: 0.5; }
+  50% { opacity: 1; }
+  100% { opacity: 0.5; }
+}
+
+@keyframes progress {
+  0% { width: 0%; }
+  50% { width: 60%; }
+  100% { width: 90%; }
+}
+
+@media (max-width: 1024px) {
+  .reflectionGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .analysisStatus {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .cardHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+
+  .cardBody {
+    padding: var(--space-4);
+  }
+
+  .timing {
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+
+  .hypothesisHeader {
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .hypothesisFooter {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .changesList {
+    gap: var(--space-2);
+  }
+
+  .changeChip {
+    width: 100%;
+    font-size: var(--text-xs);
+  }
+
+  .activeReflection {
+    padding: var(--space-4);
+  }
+
+  .activeReflectionHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-3);
+  }
+}
+
+@media (max-width: 480px) {
+  .analysisStatus {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .statusItem {
+    padding: var(--space-2);
+  }
+
+  .statusItemValue {
+    font-size: var(--text-base);
+  }
+}

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Search, Filter, ArrowUpDown, ArrowUp, ArrowDown, ChevronDown } from 'lucide-react'
 import { useOpenPositions, useClosedTrades, useStrategyVersions } from '../context/TradingContext'
+import { TradeDetailModal, PositionDetailModal } from '../components/Modal/TradeDetailModal'
 import styles from './TradingActivity.module.css'
 
 function formatCurrency(value) {
@@ -32,6 +33,8 @@ export default function TradingActivity() {
     strategy: 'all'
   })
   const [sortConfig, setSortConfig] = useState({ key: 'exitTime', direction: 'desc' })
+  const [selectedTrade, setSelectedTrade] = useState(null)
+  const [selectedPosition, setSelectedPosition] = useState(null)
 
   const filteredOpenPositions = openPositions.filter(pos => {
     if (filters.search && !pos.asset.toLowerCase().includes(filters.search.toLowerCase())) return false
@@ -150,7 +153,7 @@ export default function TradingActivity() {
 
           <div className={styles.positionsContainer}>
             {filteredOpenPositions.map(position => (
-              <div key={position.id} className={styles.positionCard}>
+              <div key={position.id} className={styles.positionCard} onClick={() => setSelectedPosition(position)} role="button" tabIndex={0} onKeyDown={e => e.key === 'Enter' && setSelectedPosition(position)}>
                 <div className={styles.positionHeader}>
                   <div className={styles.positionMeta}>
                     <div className={styles.assetBadge}>
@@ -238,7 +241,7 @@ export default function TradingActivity() {
               </tr>
             ) : (
               filteredClosedTrades.map(trade => (
-                <tr key={trade.id}>
+                <tr key={trade.id} onClick={() => setSelectedTrade(trade)} style={{ cursor: 'pointer' }}>
                   <td>
                     <div className={styles.assetCell}>
                       <div className={`${styles.assetIcon} ${styles[trade.asset.toLowerCase()]}`}>
@@ -271,6 +274,14 @@ export default function TradingActivity() {
           </tbody>
         </table>
       </div>
+
+      {/* Trade & Position Detail Modals */}
+      {selectedTrade && (
+        <TradeDetailModal trade={selectedTrade} onClose={() => setSelectedTrade(null)} />
+      )}
+      {selectedPosition && (
+        <PositionDetailModal position={selectedPosition} onClose={() => setSelectedPosition(null)} />
+      )}
     </div>
   )
 }

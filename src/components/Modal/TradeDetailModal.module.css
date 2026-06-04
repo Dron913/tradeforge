@@ -1,0 +1,229 @@
+.overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 150ms ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal {
+  background: var(--bg-elevated, #0D1117);
+  border: 1px solid var(--border-default, #30363D);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 520px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  animation: slideUp 200ms ease-out;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--border-subtle, #21262D);
+  position: sticky;
+  top: 0;
+  background: var(--bg-elevated, #0D1117);
+  z-index: 1;
+}
+
+.headerTop {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.assetBadge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-lg, 18px);
+  font-weight: 700;
+  color: var(--text-primary, #E6EDF3);
+}
+
+.assetBadge span:first-child {
+  font-family: var(--font-mono, monospace);
+}
+
+.sideBadge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.sideBadge[data-side="long"] {
+  background: rgba(0, 212, 255, 0.15);
+  color: #00D4FF;
+}
+
+.sideBadge[data-side="short"] {
+  background: rgba(244, 63, 94, 0.15);
+  color: #F43F5E;
+}
+
+.sideBadge[data-asset] {
+  background: var(--bg-interactive, #21262D);
+  color: var(--text-secondary, #8B949E);
+}
+
+.overlay .modal .header .assetBadge .sideBadge[data-side],
+.assetBadge[data-side="long"] .sideBadge,
+.assetBadge[data-side="short"] .sideBadge {
+  background: inherit;
+  color: inherit;
+}
+
+.pnlBadge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-family: var(--font-mono, monospace);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.pnlBadge.profit {
+  background: rgba(16, 185, 129, 0.12);
+  color: #10B981;
+}
+
+.pnlBadge.loss {
+  background: rgba(244, 63, 94, 0.12);
+  color: #F43F5E;
+}
+
+.statusBadge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(0, 212, 255, 0.1);
+  color: #00D4FF;
+}
+
+.closeBtn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  color: var(--text-muted, #6E7681);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  transition: all 120ms ease;
+}
+
+.closeBtn:hover {
+  background: var(--bg-hover, #21262D);
+  color: var(--text-primary, #E6EDF3);
+}
+
+.body {
+  padding: 20px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sectionTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted, #6E7681);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.detailGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.detailRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-subtle, #21262D);
+  gap: 16px;
+}
+
+.detailRow:last-child {
+  border-bottom: none;
+}
+
+.detailLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted, #8B949E);
+  flex-shrink: 0;
+  min-width: 160px;
+}
+
+.detailValue {
+  font-family: var(--font-mono, monospace);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary, #E6EDF3);
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.detailNote {
+  font-size: 11px;
+  color: var(--text-muted, #6E7681);
+  font-weight: 400;
+  font-family: var(--text, -apple-system);
+}
+
+.positive {
+  color: var(--profit, #10B981) !important;
+}
+
+.negative {
+  color: var(--loss, #F43F5E) !important;
+}
+
+.disclaimer {
+  font-size: 11px;
+  color: var(--text-muted, #6E7681);
+  background: var(--bg-interactive, #161B22);
+  border-radius: 8px;
+  padding: 10px 12px;
+  line-height: 1.5;
+  border: 1px solid var(--border-subtle, #21262D);
+}

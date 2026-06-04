@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import { LineChart, Line, AreaChart, Area, ResponsiveContainer } from 'recharts'
-import { TrendingUp, TrendingDown, Activity, Brain, Play, ArrowRight, RefreshCw } from 'lucide-react'
+import { TrendingUp, TrendingDown, Activity, Brain, ArrowRight, RefreshCw, Wallet, DollarSign } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { useMetrics, useOpenPositions, useClosedTrades, useEquityCurve, useHealth } from '../context/TradingContext'
+import { useMetrics, useOpenPositions, useClosedTrades, useEquityCurve, useHealth, usePaperAccount } from '../context/TradingContext'
+import { TradeDetailModal, PositionDetailModal } from '../components/Modal/TradeDetailModal'
 import styles from './Dashboard.module.css'
 
 function formatCurrency(value) {
@@ -36,11 +38,14 @@ export default function Dashboard() {
   const closedTrades = useClosedTrades()
   const equityCurve = useEquityCurve()
   const { health, connected, loading, lastUpdated } = useHealth()
+  const paperAccount = usePaperAccount()
+  const [selectedTrade, setSelectedTrade] = useState(null)
+  const [selectedPosition, setSelectedPosition] = useState(null)
 
-  // Derived stats from live data
+  // Derived stats from live data — newest first
   const recentTrades = [
-    ...openPositions.slice(0, 3).map(p => ({ ...p, _type: 'open' })),
-    ...closedTrades.slice(0, 3).map(t => ({ ...t, _type: 'closed' })),
+    ...openPositions.slice(-3).reverse().map(p => ({ ...p, _type: 'open' })),
+    ...closedTrades.slice(-3).reverse().map(t => ({ ...t, _type: 'closed' })),
   ]
 
   // Best and worst trade
@@ -154,6 +159,78 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Paper Account Transparency Panel */}
+      {paperAccount && (
+        <div className={styles.paperAccountPanel}>
+          <div className={styles.paperAccountHeader}>
+            <div className={styles.paperAccountTitle}>
+              <Wallet size={16} />
+              Paper Account
+            </div>
+            <div className={styles.paperAccountBadge}>
+              <DollarSign size={12} />
+              Capital Tracking
+            </div>
+          </div>
+          <div className={styles.paperAccountGrid}>
+            <div className={styles.paperMetric}>
+              <div className={styles.paperMetricLabel}>Starting Balance</div>
+              <div className={styles.paperMetricValue}>
+                {formatCurrency(paperAccount.starting_balance)}
+              </div>
+            </div>
+            <div className={styles.paperMetric}>
+              <div className={styles.paperMetricLabel}>Current Balance</div>
+              <div className={`${styles.paperMetricValue} ${paperAccount.current_balance >= paperAccount.starting_balance ? styles.positive : styles.negative}`}>
+                {formatCurrency(paperAccount.current_balance)}
+              </div>
+            </div>
+            <div className={styles.paperMetric}>
+              <div className={styles.paperMetricLabel}>Realized P&L</div>
+              <div className={`${styles.paperMetricValue} ${paperAccount.realized_pnl_usd >= 0 ? styles.positive : styles.negative}`}>
+                {paperAccount.realized_pnl_usd >= 0 ? '+' : ''}{formatCurrency(paperAccount.realized_pnl_usd)}
+              </div>
+            </div>
+            <div className={styles.paperMetric}>
+              <div className={styles.paperMetricLabel}>Unrealized P&L</div>
+              <div className={`${styles.paperMetricValue} ${paperAccount.unrealized_pnl_usd >= 0 ? styles.positive : styles.negative}`}>
+                {paperAccount.unrealized_pnl_usd >= 0 ? '+' : ''}{formatCurrency(paperAccount.unrealized_pnl_usd)}
+              </div>
+            </div>
+            <div className={styles.paperMetric}>
+              <div className={styles.paperMetricLabel}>Available Capital</div>
+              <div className={`${styles.paperMetricValue} ${styles.muted}`}>
+                {formatCurrency(paperAccount.available_capital)}
+              </div>
+            </div>
+            <div className={styles.paperMetric}>
+              <div className={styles.paperMetricLabel}>Capital Deployed</div>
+              <div className={`${styles.paperMetricValue} ${styles.muted}`}>
+                {formatCurrency(paperAccount.deployed_capital)}
+              </div>
+            </div>
+            <div className={styles.paperMetric}>
+              <div className={styles.paperMetricLabel}>Utilization</div>
+              <div className={`${styles.paperMetricValue} ${paperAccount.capital_utilization_pct > 75 ? styles.warning : styles.muted}`}>
+                {paperAccount.capital_utilization_pct.toFixed(1)}%
+              </div>
+            </div>
+            <div className={styles.paperMetric}>
+              <div className={styles.paperMetricLabel}>Net P&L</div>
+              <div className={`${styles.paperMetricValue} ${(paperAccount.realized_pnl_usd + paperAccount.unrealized_pnl_usd) >= 0 ? styles.positive : styles.negative}`}>
+                {(paperAccount.realized_pnl_usd + paperAccount.unrealized_pnl_usd) >= 0 ? '+' : ''}{formatCurrency(paperAccount.realized_pnl_usd + paperAccount.unrealized_pnl_usd)}
+              </div>
+            </div>
+          </div>
+          <div className={styles.paperAccountFormula}>
+            Portfolio Value formula: Starting Balance × (1 + Σ P&L%) = {formatCurrency(paperAccount.starting_balance)} × (1 + {(metrics.totalReturn || 0).toFixed(2)}%)
+            {' → '}{formatCurrency(metrics.totalValue || paperAccount.current_balance)}
+            {' | '}
+            Starting Balance confirmed from Railway persistent state
+          </div>
+        </div>
+      )}
+
       <div className={styles.sectionHeader}>
         <h2 className={styles.sectionTitle}>Performance Metrics</h2>
         <div className={styles.quickActions}>
@@ -210,7 +287,12 @@ export default function Dashboard() {
               </thead>
               <tbody>
                 {recentTrades.map(trade => (
-                  <tr key={trade.id}>
+                  <tr
+                    key={trade.id}
+                    onClick={() => trade._type === 'open' ? setSelectedPosition(trade) : setSelectedTrade(trade)}
+                    title="Click for trade details"
+                    style={{ cursor: 'pointer' }}
+                  >
                     <td>
                       <div className={styles.tradeAsset}>{trade.asset}</div>
                     </td>
@@ -269,6 +351,14 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Trade & Position Detail Modals */}
+      {selectedTrade && (
+        <TradeDetailModal trade={selectedTrade} onClose={() => setSelectedTrade(null)} />
+      )}
+      {selectedPosition && (
+        <PositionDetailModal position={selectedPosition} onClose={() => setSelectedPosition(null)} />
+      )}
     </div>
   )
 }

@@ -186,6 +186,11 @@ export function useEquityCurve() {
   return data?.equityCurveData || [];
 }
 
+export function usePaperAccount() {
+  const { data } = useTrading();
+  return data?.paperAccount || null;
+}
+
 export function useKnowledge() {
   const { data } = useTrading();
   return {

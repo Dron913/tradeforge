@@ -17,6 +17,14 @@
   border-radius: var(--radius-xl);
   padding: var(--space-6);
   overflow-x: auto;
+  max-width: 100%;
+}
+
+/* Fixed-width timeline: outer shell constrains width, inner scrollable viewport scrolls */
+.timelineSectionInner {
+  min-width: 600px;
+  max-width: var(--timeline-max-width, 2000px);
+  width: 100%;
 }
 
 .timeline {

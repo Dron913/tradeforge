@@ -19,6 +19,7 @@ function TimelineSection({ strategyVersions }) {
   return (
     <div className={styles.timelineSection}>
       <h2 className={styles.sectionTitle}>Strategy Versions</h2>
+      <div className={styles.timelineSectionInner}>
       <div className={styles.timeline}>
         {strategyVersions.map((version) => {
           const Icon = versionIcons[version.status]
@@ -30,6 +31,7 @@ function TimelineSection({ strategyVersions }) {
             <div key={version.version} className={styles.timelineNode}>
               <div
                 className={`${styles.nodeCircle} ${version.status === 'active' ? styles.active : ''} ${styles[performanceClass]}`}
+                style={{ flexShrink: 0 }}
               >
                 v{version.version.replace(/^v/, '').replace(/^0+/, '')}
               </div>
@@ -40,6 +42,7 @@ function TimelineSection({ strategyVersions }) {
             </div>
           )
         })}
+      </div>
       </div>
     </div>
   )
@@ -180,7 +183,7 @@ export default function StrategyEvolution() {
     return h?.hermesFailed || (h?.reason || '').includes('Hermes parse failed')
   }
 
-  // Build evolution events from hypotheses
+  // Build evolution events from hypotheses — newest first per user requirement
   const evolutionEvents = closedTrades.length === 0
     ? []
     : strategyVersions.map((sv, i) => ({
@@ -193,7 +196,8 @@ export default function StrategyEvolution() {
         changes: sv.changes || [],
         hermesFailed: isHermesFailed(sv),
         sourceMode: sv.fromHypothesis?.mode || 'unknown',
-      })).reverse()
+      }))
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)) // newest first
 
   // Hermes effectiveness stats
   const hermesSuccess = strategyVersions.filter(sv => !isHermesFailed(sv) && (sv.fromHypothesis?.mode === 'hermes' || sv.fromHypothesis?.mode === 'hermes_phase3_test'))

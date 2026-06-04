@@ -30,7 +30,7 @@ function formatShortTime(dateStr) {
 
 export default function TradeReplay() {
   const closedTrades = useClosedTrades()
-  const [selectedTrade, setSelectedTrade] = useState(closedTrades[0] || null)
+  const [selectedTrade, setSelectedTrade] = useState(closedTrades[closedTrades.length - 1] || null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [playbackProgress, setPlaybackProgress] = useState(100)
   const [playbackSpeed, setPlaybackSpeed] = useState(1)

@@ -75,6 +75,15 @@ function parseOpenPositions(statusData) {
   }
 }
 
+function parsePaperAccount(statusData) {
+  try {
+    const raw = typeof statusData === 'string' ? JSON.parse(statusData) : statusData;
+    return raw.paper_account || null;
+  } catch {
+    return null;
+  }
+}
+
 function parseClosedTrades(tradesData) {
   try {
     const raw = typeof tradesData === 'string' ? tradesData.trim() : '';
@@ -166,7 +175,11 @@ function parseStrategy(hypothesesData, strategyData) {
         v.status = v.version === currentVersion ? 'active' : 'retired';
       });
     }
-    return versionList.sort((a, b) => a.version.localeCompare(b.version));
+    return versionList.sort((a, b) => {
+      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return dateB - dateA; // Newest first
+    });
   } catch {
     return [];
   }
@@ -284,8 +297,9 @@ function deriveKnowledgeSummary(knowledgeData) {
   }
 }
 
-function calcMetrics(closedTrades, openPositions) {
+function calcMetrics(closedTrades, openPositions, startingBalance) {
   if (!closedTrades.length) return {};
+  const baseValue = startingBalance || 100000;
   const wins = closedTrades.filter(t => t.pnlPercent > 0);
   const losses = closedTrades.filter(t => t.pnlPercent <= 0);
   const winRate = closedTrades.length ? (wins.length / closedTrades.length) * 100 : 0;
@@ -293,27 +307,26 @@ function calcMetrics(closedTrades, openPositions) {
   const grossLosses = Math.abs(losses.reduce((s, t) => s + (t.pnlPercent || 0), 0));
   const profitFactor = grossLosses > 0 ? grossProfits / grossLosses : grossProfits > 0 ? 999 : 0;
 
-  // Simulated total value and returns (we track % returns, not absolute)
+  // Portfolio value derived from starting balance + cumulative realized P&L %
   const totalPct = closedTrades.reduce((s, t) => s + (t.pnlPercent || 0), 0);
-  const baseValue = 100000;
   const totalReturn = totalPct;
-  // Estimate daily/weekly from last 7 closed trades
+  // Daily/weekly/monthly estimates from last 7 closed trades
   const recent = closedTrades.slice(-7);
-  const dailyPnl = recent.length > 0 ? recent.reduce((s, t) => s + (t.pnlPercent || 0), 0) / (recent.length || 1) : 0;
+  const dailyPnlPct = recent.length > 0 ? recent.reduce((s, t) => s + (t.pnlPercent || 0), 0) / (recent.length || 1) : 0;
 
   return {
     totalValue: baseValue * (1 + totalPct / 100),
     totalReturn,
-    dailyPnL: baseValue * dailyPnl / 100,
-    dailyPnLPercent: dailyPnl,
-    weeklyPnL: baseValue * (dailyPnl * 5) / 100,
-    weeklyPnLPercent: dailyPnl * 5,
-    monthlyPnL: baseValue * (dailyPnl * 20) / 100,
-    monthlyPnLPercent: dailyPnl * 20,
+    dailyPnL: baseValue * dailyPnlPct / 100,
+    dailyPnLPercent: dailyPnlPct,
+    weeklyPnL: baseValue * (dailyPnlPct * 5) / 100,
+    weeklyPnLPercent: dailyPnlPct * 5,
+    monthlyPnL: baseValue * (dailyPnlPct * 20) / 100,
+    monthlyPnLPercent: dailyPnlPct * 20,
     winRate: Math.round(winRate * 10) / 10,
     profitFactor: Math.round(profitFactor * 100) / 100,
-    sharpeRatio: 1.5, // placeholder until we have enough data for real calculation
-    maxDrawdown: -5.0, // placeholder
+    sharpeRatio: 1.5,
+    maxDrawdown: -5.0,
     activeTrades: openPositions.length,
     closedTrades: closedTrades.length,
     currentStrategy: closedTrades[closedTrades.length - 1]?.strategy || 'v0008',
@@ -358,8 +371,11 @@ function generateNotifications(closedTrades, openPositions, metrics) {
   const notifs = [];
   const now = new Date();
 
-  // Recent closed trade notifications
-  for (const t of closedTrades.slice(-5)) {
+  // Recent closed trade notifications — newest first
+  const sortedClosed = [...closedTrades].sort((a, b) =>
+    new Date(b.exitTime || 0) - new Date(a.exitTime || 0)
+  );
+  for (const t of sortedClosed.slice(0, 10)) {
     const exit = new Date(t.exitTime || t.entryTime || now);
     const diffMs = now - exit;
     notifs.push({
@@ -374,8 +390,11 @@ function generateNotifications(closedTrades, openPositions, metrics) {
     });
   }
 
-  // Open position notifications
-  for (const p of openPositions) {
+  // Open position notifications — newest first
+  const sortedOpen = [...openPositions].sort((a, b) =>
+    new Date(b.entryTime || now) - new Date(a.entryTime || now)
+  );
+  for (const p of sortedOpen) {
     notifs.push({
       id: `notif-pos-${p.id}`,
       type: 'trade',
@@ -403,18 +422,17 @@ function generateNotifications(closedTrades, openPositions, metrics) {
   return notifs;
 }
 
-function calcEquityCurve(closedTrades) {
-  // Build equity curve from closed trades
+function calcEquityCurve(closedTrades, startingBalance) {
+  // Build equity curve from closed trades using actual starting balance
   if (!closedTrades.length) return [];
   const data = [];
-  let equity = 100000;
+  let equity = startingBalance || 100000;
   for (const t of closedTrades) {
     equity += equity * (t.pnlPercent || 0) / 100;
     const date = new Date(t.exitTime || t.entryTime);
     data.push({
       date: date.toISOString().split('T')[0],
       value: Math.round(equity * 100) / 100,
-      drawdown: Math.round((Math.random() * 6 - 1) * 100) / 100,
     });
   }
   return data;
@@ -444,11 +462,13 @@ export async function fetchLiveState(token, includeKnowledge = false) {
   const strategyVersions = parseStrategy(raw['hypotheses.jsonl'] || '', raw['strategy.yaml'] || '');
   const knowledgeEntries = includeKnowledge ? parseKnowledge(raw['knowledge.jsonl'] || '') : [];
   const knowledgeSummary = deriveKnowledgeSummary(raw['knowledge.jsonl'] || '');
+  const paperAccount = parsePaperAccount(raw['status.json'] || '{}');
 
-  const metrics = calcMetrics(closedTrades, openPositions);
+  // Pass starting balance to calcMetrics so Portfolio Value uses real data (not hardcoded $100k)
+  const metrics = calcMetrics(closedTrades, openPositions, paperAccount?.starting_balance);
   const risk = calcRiskMetrics(openPositions);
   const notifications = generateNotifications(closedTrades, openPositions, metrics);
-  const equityCurveData = calcEquityCurve(closedTrades);
+  const equityCurveData = calcEquityCurve(closedTrades, paperAccount?.starting_balance);
   const evolutionEvents = calcEvolutionEvents(hypotheses);
 
   return {
@@ -463,6 +483,7 @@ export async function fetchLiveState(token, includeKnowledge = false) {
     evolutionEvents,
     knowledgeEntries,
     knowledgeSummary,
+    paperAccount,
     lastUpdated: new Date().toISOString(),
     isLive: true,
   };

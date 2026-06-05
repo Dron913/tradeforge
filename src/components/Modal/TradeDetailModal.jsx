@@ -1,8 +1,8 @@
-import { X, Clock, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Target, DollarSign, Calendar, Activity } from 'lucide-react'
+import { X, Clock, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Target, DollarSign, Calendar, Activity, Zap } from 'lucide-react'
 import styles from './TradeDetailModal.module.css'
 
 function formatCurrency(value) {
-  if (value == null) return '--'
+  if (value == null || isNaN(value)) return '--'
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
@@ -12,91 +12,87 @@ function formatCurrency(value) {
 }
 
 function formatPercent(value) {
-  if (value == null) return '--'
+  if (value == null || isNaN(value)) return '--'
   const sign = value >= 0 ? '+' : ''
   return `${sign}${value.toFixed(2)}%`
 }
 
 function formatDateTime(dateStr) {
-  if (!dateStr) return '--'
+  if (!dateStr || dateStr === '--') return '--'
   return new Date(dateStr).toLocaleString('en-US', {
     month: 'short', day: 'numeric',
     hour: '2-digit', minute: '2-digit'
   })
 }
 
-function formatDuration(duration) {
-  if (!duration) return '--'
-  return duration
+function formatDuration(secs) {
+  if (secs == null) return '--'
+  const s = Number(secs)
+  if (isNaN(s)) return '--'
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m` : '<1m'
 }
 
-// Estimate typical position size based on entry price + estimated qty
-// For paper trading: assume ~$25,000 per position (25% of $100k, ≤4 max positions)
-const TYPICAL_POSITION_SIZE = 25000
+/** Standard position size per Hermes MAX_POSITION_PCT = 0.25 × starting_balance */
+function getPositionSize() {
+  return 25000
+}
 
-function derivePositionValues(trade) {
-  if (!trade) return null
-  // If we have entry_price and pnlPercent, derive approx position size
-  // pnl_pct = (exit - entry) / entry * 100   =>  qty * abs(exit - entry) = abs(pnl_in_dollars)
-  // position_size ≈ abs(pnl_in_dollars) / abs(pnl_pct) * 100
-  const pnlPct = trade.pnlPercent || 0
-  if (trade.pnl != null && pnlPct !== 0) {
-    // pnl is stored as pnl_pct, not USD — can't derive position size from this alone
-  }
-  // Fall back to typical position size
-  return TYPICAL_POSITION_SIZE
+function formatSLTP(value) {
+  if (value == null || value === '?' || isNaN(Number(value))) return '--'
+  return `${Number(value).toFixed(2)}%`
 }
 
 export function TradeDetailModal({ trade, onClose }) {
   if (!trade) return null
 
-  const posSize = derivePositionValues(trade)
-  const pnlUsd = trade.pnl != null ? (posSize * (trade.pnlPercent || 0) / 100) : null
-  const entryValue = posSize
-  const exitValue = posSize * (1 + (trade.pnlPercent || 0) / 100)
-  const isProfit = (trade.pnlPercent || 0) >= 0
+  const POSITION_SIZE = getPositionSize()
+  const pnlPercent = trade.pnlPercent || 0
+  const pnlUsd = POSITION_SIZE * pnlPercent / 100
+  const isProfit = pnlPercent >= 0
 
   const detailRows = [
     { icon: Activity, label: 'Asset', value: `${trade.asset} ${trade.side ? trade.side.toUpperCase() : ''}` },
-    { icon: Target, label: 'Strategy', value: trade.strategy || '--' },
+    { icon: Zap, label: 'Strategy Version', value: trade.strategy || '--' },
     { icon: Clock, label: 'Duration', value: formatDuration(trade.duration) },
     { icon: Calendar, label: 'Entry Time', value: formatDateTime(trade.entryTime) },
     { icon: Calendar, label: 'Exit Time', value: formatDateTime(trade.exitTime) },
     { icon: ArrowUpRight, label: 'Entry Price', value: formatCurrency(trade.entryPrice) },
     { icon: ArrowDownRight, label: 'Exit Price', value: formatCurrency(trade.exitPrice) },
-    { icon: DollarSign, label: 'Position Size', value: formatCurrency(posSize), note: '~25% of paper account per position' },
-    { icon: DollarSign, label: 'Entry Value', value: formatCurrency(entryValue) },
-    { icon: DollarSign, label: 'Exit Value', value: formatCurrency(exitValue) },
-    { icon: isProfit ? TrendingUp : TrendingDown, label: 'Realized P&L (USD)',
-      value: pnlUsd != null ? `${pnlUsd >= 0 ? '+' : ''}${formatCurrency(pnlUsd)}` : '--',
-      valueClass: pnlUsd != null ? (pnlUsd >= 0 ? styles.positive : styles.negative) : '' },
-    { icon: isProfit ? TrendingUp : TrendingDown, label: 'P&L %',
-      value: formatPercent(trade.pnlPercent),
+    { icon: DollarSign, label: 'Position Size', value: formatCurrency(POSITION_SIZE),
+      note: 'Standard per Hermes rules (25% × $100k starting balance)' },
+    { icon: DollarSign, label: 'Capital Deployed', value: formatCurrency(POSITION_SIZE) },
+    { icon: DollarSign, label: 'Capital Returned', value: formatCurrency(POSITION_SIZE + pnlUsd) },
+    { icon: isProfit ? TrendingUp : TrendingDown, label: 'Profit / Loss (USD)',
+      value: `${pnlUsd >= 0 ? '+' : ''}${formatCurrency(pnlUsd)}`,
+      valueClass: pnlUsd >= 0 ? styles.positive : styles.negative },
+    { icon: isProfit ? TrendingUp : TrendingDown, label: 'Profit / Loss (%)',
+      value: formatPercent(pnlPercent),
       valueClass: isProfit ? styles.positive : styles.negative },
-    { icon: Target, label: 'Exit Reason', value: trade.exitReason || '--' },
+    { icon: Target, label: 'Exit Reason', value: (trade.exitReason || '--').replace(/_/g, ' ') },
   ]
 
-  // MFE/MAE if available
-  if (trade.mfe_pct != null) {
+  if (trade.mfe_pct != null && !isNaN(Number(trade.mfe_pct))) {
     detailRows.push({
       icon: TrendingUp, label: 'Max Favorable Excursion (MFE)',
-      value: `+${formatPercent(trade.mfe_pct)}`,
+      value: `+${formatPercent(Number(trade.mfe_pct))}`,
       valueClass: styles.positive,
     })
   }
-  if (trade.mae_pct != null) {
+  if (trade.mae_pct != null && !isNaN(Number(trade.mae_pct))) {
     detailRows.push({
       icon: TrendingDown, label: 'Max Adverse Excursion (MAE)',
-      value: formatPercent(trade.mae_pct),
+      value: formatPercent(Number(trade.mae_pct)),
       valueClass: styles.negative,
     })
   }
-  if (trade.profit_if_held_pct != null) {
-    const pifh = parseFloat(trade.profit_if_held_pct)
+  if (trade.profit_if_held_pct != null && !isNaN(Number(trade.profit_if_held_pct))) {
+    const pifh = Number(trade.profit_if_held_pct)
     detailRows.push({
       icon: Target, label: 'Ceiling (if held)',
       value: `+${formatPercent(pifh)}`,
-      note: pifh > (trade.pnlPercent || 0) ? '→ Exited early' : '→ Captured most of it',
+      note: pifh > pnlPercent ? '— Exited early' : '— Captured most of it',
     })
   }
 
@@ -113,7 +109,7 @@ export function TradeDetailModal({ trade, onClose }) {
             </div>
             <div className={`${styles.pnlBadge} ${isProfit ? styles.profit : styles.loss}`}>
               {isProfit ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-              {formatPercent(trade.pnlPercent)}
+              {formatPercent(pnlPercent)}
             </div>
           </div>
           <button className={styles.closeBtn} onClick={onClose}>
@@ -137,11 +133,6 @@ export function TradeDetailModal({ trade, onClose }) {
               </div>
             ))}
           </div>
-
-          <div className={styles.disclaimer}>
-            Position size estimated at ~{formatCurrency(TYPICAL_POSITION_SIZE)} (~25% of paper account, per max-position rules).
-            Actual position sizing may vary based on Hermes risk parameters.
-          </div>
         </div>
       </div>
     </div>
@@ -151,30 +142,31 @@ export function TradeDetailModal({ trade, onClose }) {
 export function PositionDetailModal({ position, onClose }) {
   if (!position) return null
 
-  const posSize = TYPICAL_POSITION_SIZE
-  const unrealizedPnlUsd = (position.pnlPercent || 0) * posSize / 100
-  const currentPrice = position.currentPrice || 0
-  const entryPrice = position.entryPrice || 0
-  const isProfit = (position.pnlPercent || 0) >= 0
+  const POSITION_SIZE = getPositionSize()
+  const pnlPercent = position.pnlPercent || 0
+  const unrealizedUsd = POSITION_SIZE * pnlPercent / 100
+  const marketValue = POSITION_SIZE * (1 + pnlPercent / 100)
+  const isProfit = pnlPercent >= 0
 
   const detailRows = [
     { icon: Activity, label: 'Asset', value: `${position.asset} ${position.side?.toUpperCase() || 'LONG'}` },
-    { icon: Target, label: 'Strategy', value: position.strategy || 'live' },
+    { icon: Zap, label: 'Strategy Version', value: position.strategy || 'live' },
     { icon: Clock, label: 'Duration', value: formatDuration(position.duration) },
     { icon: Calendar, label: 'Entry Time', value: formatDateTime(position.entryTime) },
-    { icon: ArrowUpRight, label: 'Entry Price', value: formatCurrency(entryPrice) },
-    { icon: ArrowDownRight, label: 'Current Price', value: formatCurrency(currentPrice) },
-    { icon: DollarSign, label: 'Position Size', value: formatCurrency(posSize), note: '~25% of paper account' },
-    { icon: DollarSign, label: 'Market Value', value: formatCurrency(posSize * (1 + (position.pnlPercent || 0) / 100)) },
-    { icon: DollarSign, label: 'Capital Deployed', value: formatCurrency(posSize) },
-    { icon: DollarSign, label: 'Unrealized P&L (USD)',
-      value: `${unrealizedPnlUsd >= 0 ? '+' : ''}${formatCurrency(unrealizedPnlUsd)}`,
-      valueClass: unrealizedPnlUsd >= 0 ? styles.positive : styles.negative },
-    { icon: isProfit ? TrendingUp : TrendingDown, label: 'Unrealized P&L %',
-      value: formatPercent(position.pnlPercent),
+    { icon: ArrowUpRight, label: 'Entry Price', value: formatCurrency(position.entryPrice) },
+    { icon: ArrowDownRight, label: 'Current Price', value: formatCurrency(position.currentPrice) },
+    { icon: DollarSign, label: 'Position Size', value: formatCurrency(POSITION_SIZE),
+      note: 'Standard per Hermes rules (25% × $100k starting balance)' },
+    { icon: DollarSign, label: 'Capital Deployed', value: formatCurrency(POSITION_SIZE) },
+    { icon: DollarSign, label: 'Market Value', value: formatCurrency(marketValue) },
+    { icon: isProfit ? TrendingUp : TrendingDown, label: 'Unrealized P&L (USD)',
+      value: `${unrealizedUsd >= 0 ? '+' : ''}${formatCurrency(unrealizedUsd)}`,
+      valueClass: unrealizedUsd >= 0 ? styles.positive : styles.negative },
+    { icon: isProfit ? TrendingUp : TrendingDown, label: 'Unrealized P&L (%)',
+      value: formatPercent(pnlPercent),
       valueClass: isProfit ? styles.positive : styles.negative },
-    { icon: Target, label: 'Stop Loss', value: position.sl || '--' },
-    { icon: Target, label: 'Take Profit', value: position.tp || '--' },
+    { icon: Target, label: 'Stop Loss', value: formatSLTP(position.sl) },
+    { icon: Target, label: 'Take Profit', value: formatSLTP(position.tp) },
   ]
 
   return (

@@ -1,32 +1,112 @@
 /**
  * TradeForge Railway API Client
  * Calls the Railway worker's /debug/state endpoint to get live trading data.
+ * Includes exponential backoff retry and 401 auto-recovery.
  */
 
 const API_BASE = import.meta.env.VITE_RAILWAY_API_URL || 'https://tradeforge-production-fbc1.up.railway.app';
+const REQUEST_TIMEOUT = 45000; // 45s — /debug/state can return 35MB+ taking 15-20s
 
-function apiFetch(path, token) {
-  const url = token ? `${API_BASE}${path}${path.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}` : `${API_BASE}${path}`;
-  return fetch(url, { signal: AbortSignal.timeout(10000) });
+// Track consecutive failures to help callers know if backend is consistently down
+let _consecutiveFailures = 0;
+
+function getConsecutiveFailures() {
+  return _consecutiveFailures;
 }
 
-export async function fetchAuthStatus(token) {
+/**
+ * Fetch with exponential backoff retry.
+ * Retries on network errors and 5xx/429 responses. Does NOT retry on 401/403/404.
+ * @param {string} url
+ * @param {RequestInit} opts
+ * @param {string} token - session token (not the deploy token — session tokens come from /api/auth/login)
+ * @param {number} attempt
+ */
+async function fetchWithRetry(url, opts, token, attempt = 1) {
+  const signal = AbortSignal.timeout(REQUEST_TIMEOUT);
+
   try {
-    const res = await apiFetch('/api/auth/status', token);
+    const res = await fetch(url, { ...opts, signal });
+
+    // 401 = session expired; surface immediately (don't retry) so caller can re-login
+    if (res.status === 401) {
+      _consecutiveFailures++;
+      throw Object.assign(new Error('unauthorized'), { status: 401, isAuthError: true });
+    }
+
+    // 429 / 5xx — retry with backoff
+    if (res.status === 429 || res.status >= 500) {
+      _consecutiveFailures++;
+      if (attempt >= 4) {
+        throw new Error(`API ${res.status} after ${attempt} attempts`);
+      }
+      const retryAfter = parseInt(res.headers.get('Retry-After') || '');
+      const delay = isNaN(retryAfter) ? attempt * attempt * 500 : retryAfter * 1000;
+      await sleep(delay);
+      return fetchWithRetry(url, opts, token, attempt + 1);
+    }
+
+    // 404 / other client errors — no retry
     if (!res.ok) {
-      if (res.status === 401) return { authEnabled: true, unlocked: false, tokenValid: false };
+      _consecutiveFailures++;
       throw new Error(`API ${res.status}`);
     }
+
+    _consecutiveFailures = 0;
+    return res;
+  } catch (err) {
+    // Network error / timeout — retry once with a pause
+    if (err.name === 'TimeoutError' || err.name === 'AbortError' || err.message.includes('network') || !err.status) {
+      _consecutiveFailures++;
+      if (attempt >= 3) throw err;
+      await sleep(attempt * 1000);
+      return fetchWithRetry(url, opts, token, attempt + 1);
+    }
+    throw err;
+  }
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function apiFetch(path, token) {
+  const separator = path.includes('?') ? '&' : '?';
+  const url = token
+    ? `${API_BASE}${path}${separator}token=${encodeURIComponent(token)}`
+    : `${API_BASE}${path}`;
+  return fetchWithRetry(url, {}, token);
+}
+
+/**
+ * Fetch a single file with Bearer auth — uses /debug/file/* endpoints,
+ * each responds in ~2s via the Python backend (vs 17-31s for combined /debug/state).
+ */
+function apiFetchBearer(path, token) {
+  return fetchWithRetry(`${API_BASE}${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }, token);
+}
+
+export async function fetchAuthStatus() {
+  try {
+    const res = await apiFetch('/api/auth/status', null);
+    if (res.status === 401) return { authEnabled: true, unlocked: false, tokenValid: false };
+    if (!res.ok) throw new Error(`API ${res.status}`);
     return res.json();
-  } catch {
-    return { authEnabled: false, unlocked: true, tokenValid: true };
+  } catch (err) {
+    // On network error, assume no auth required and continue
+    if (!err.status && !err.isAuthError) {
+      return { authEnabled: false, unlocked: true, tokenValid: true };
+    }
+    throw err;
   }
 }
 
 export async function postLogin(password) {
   const res = await fetch(`${API_BASE}/api/auth/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Origin': 'https://tradeforge-theta.vercel.app' },
     body: JSON.stringify({ password }),
   });
   if (!res.ok) {
@@ -40,36 +120,28 @@ export async function postLogout() {
   await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST' });
 }
 
-// --- State Parsers ---
+// --- Parsers ---
 
 function parseOpenPositions(statusData) {
   try {
     const raw = typeof statusData === 'string' ? JSON.parse(statusData) : statusData;
     const positions = raw.open_positions || [];
-    return positions.map((p, i) => {
-      const assetName = p.asset.replace('/USDT', '');
-      const now = new Date();
-      const entry = new Date(p.entry_time);
-      const durationMs = now - entry;
-      const hours = Math.floor(durationMs / 3600000);
-      const mins = Math.floor((durationMs % 3600000) / 60000);
-      return {
-        id: `pos-${Date.now()}-${i}`,
-        asset: assetName,
-        side: p.side === 'long' ? 'long' : 'short',
-        entryPrice: p.entry_price,
-        currentPrice: parseFloat(p.cur_price),
-        quantity: null,
-        pnl: null,
-        pnlPercent: p.unrealized_pnl,
-        duration: hours > 24 ? `${Math.floor(hours / 24)}d ${hours % 24}h` : mins > 0 ? `${hours}h ${mins}m` : `${mins}m`,
-        strategy: 'live',
-        entryTime: p.entry_time,
-        unrealized_pnl: p.unrealized_pnl,
-        sl: p.sl || '?',
-        tp: p.tp || '?',
-      };
-    });
+    return positions.map((p, i) => ({
+      id: `pos-${Date.now()}-${i}`,
+      asset: (p.asset || '').replace('/USDT', ''),
+      side: p.side === 'long' ? 'long' : 'short',
+      entryPrice: p.entry_price,
+      currentPrice: parseFloat(p.cur_price) || 0,
+      quantity: null,
+      pnl: null,
+      pnlPercent: typeof p.unrealized_pnl === 'number' ? p.unrealized_pnl : 0,
+      duration: formatDurationMs(Date.now() - new Date(p.entry_time || Date.now()).getTime()),
+      strategy: 'live',
+      entryTime: p.entry_time,
+      unrealized_pnl: p.unrealized_pnl,
+      sl: formatSLTP(p.sl),
+      tp: formatSLTP(p.tp),
+    }));
   } catch {
     return [];
   }
@@ -91,21 +163,16 @@ function parseClosedTrades(tradesData) {
     const lines = raw.split('\n').filter(l => l.trim());
     return lines.map((line, i) => {
       const t = JSON.parse(line);
-      const assetName = t.asset.replace('/USDT', '');
-      const entry = new Date(t.timestamp);
-      const durationSec = t.duration_sec || 0;
-      const hours = Math.floor(durationSec / 3600);
-      const mins = Math.floor((durationSec % 3600) / 60);
       return {
         id: `trade-${Date.now()}-${i}`,
-        asset: assetName,
+        asset: (t.asset || '').replace('/USDT', ''),
         side: t.side || 'long',
         entryPrice: t.entry_price,
         exitPrice: t.exit_price,
         quantity: null,
-        pnl: t.pnl_pct, // stored as percentage
+        pnl: t.pnl_pct,
         pnlPercent: t.pnl_pct,
-        duration: hours > 0 ? `${hours}h ${mins}m` : mins > 0 ? `${mins}m` : '<1m',
+        duration: formatDurationSec(t.duration_sec || 0),
         strategy: t.strategy_version || 'unknown',
         exitReason: t.exit_reason || 'unknown',
         entryTime: t.timestamp,
@@ -117,35 +184,29 @@ function parseClosedTrades(tradesData) {
       };
     });
   } catch (e) {
-    console.warn('[RailwayAPI] Failed to parse trades:', e);
     return [];
   }
 }
 
 function parseStrategy(hypothesesData, strategyData) {
-  // Strategy versions are tracked via hypothesis entries which create new versions
   try {
     const raw = typeof hypothesesData === 'string' ? hypothesesData.trim() : '';
     const lines = raw ? raw.split('\n').filter(l => l.trim()) : [];
-
-    // First: get current version from strategy.yaml
     const strat = typeof strategyData === 'string' ? strategyData : '';
     const stratMatch = strat.match(/version:\s*v(\d+)/);
-    const currentVersion = stratMatch ? `v${stratMatch[1]}` : 'v0008';
+    const currentVersion = stratMatch ? `v${stratMatch[1]}` : null;
 
-    // Map version changes to strategy versions
     const versions = {};
     for (const line of lines) {
       try {
         const h = JSON.parse(line);
         if (h.version) {
-          // Normalize version string (v0008 -> v0008)
           const ver = h.version.startsWith('v') ? h.version : `v${h.version}`;
           if (!versions[ver]) {
             versions[ver] = {
               version: ver,
               status: ver === currentVersion ? 'active' : 'retired',
-              createdAt: h.timestamp,
+              createdAt: h.timestamp || new Date().toISOString(),
               trades: h.trades_analyzed || 0,
               winRate: h.stats?.win_rate || 0,
               totalPnl: h.stats?.total_pnl || 0,
@@ -154,32 +215,19 @@ function parseStrategy(hypothesesData, strategyData) {
               fromHypothesis: h,
             };
           } else {
-            // Merge stats if already exists
             versions[ver].trades = Math.max(versions[ver].trades, h.trades_analyzed || 0);
           }
         }
       } catch {}
     }
     const versionList = Object.values(versions);
-    if (versionList.length === 0) {
-      versionList.push({
-        version: currentVersion,
-        status: 'active',
-        createdAt: new Date().toISOString(),
-        trades: 0, winRate: 0, totalPnl: 0, pnlPercent: 0,
-        changes: [],
-      });
-    } else {
-      // Ensure current version from strategy.yaml is marked active
-      versionList.forEach(v => {
-        v.status = v.version === currentVersion ? 'active' : 'retired';
-      });
+    if (versionList.length === 0 && currentVersion) {
+      versionList.push({ version: currentVersion, status: 'active', createdAt: new Date().toISOString(), trades: 0, winRate: 0, totalPnl: 0, pnlPercent: 0, changes: [] });
     }
-    return versionList.sort((a, b) => {
-      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return dateB - dateA; // Newest first
+    versionList.forEach(v => {
+      v.status = v.version === currentVersion ? 'active' : 'retired';
     });
+    return versionList.sort((a, b) => (new Date(b.createdAt) || 0) - (new Date(a.createdAt) || 0));
   } catch {
     return [];
   }
@@ -189,55 +237,23 @@ function parseHypotheses(hypothesesData) {
   try {
     const raw = typeof hypothesesData === 'string' ? hypothesesData.trim() : '';
     if (!raw) return [];
-
-    // Split by newlines first
     const lines = raw.split('\n').filter(l => l.trim());
     const results = [];
-
     for (const line of lines) {
-      try {
-        results.push(JSON.parse(line));
-      } catch (e) {
-        // Line may contain embedded newlines or multiple JSON objects concatenated
-        // (e.g., Python heredoc format or missing newline between entries).
-        // Scan character by character for complete JSON objects.
-        let depth = 0;
-        let inString = false;
-        let escapeNext = false;
-        let start = -1;
-        let inObject = false;
-
-        for (let i = 0; i < line.length; i++) {
-          const c = line[i];
-          if (escapeNext) { escapeNext = false; continue; }
-          const backslash = String.fromCharCode(92);
-          if (c === backslash && inString) { escapeNext = true; continue; }
-          if (c === '"') { inString = !inString; continue; }
-          if (inString) continue;
-          // Skip whitespace outside strings
-          if (/\s/.test(c)) continue;
-
-          if (c === '{') {
-            if (depth === 0) { start = i; inObject = true; }
-            depth++;
-          } else if (c === '}') {
-            depth--;
-            if (depth === 0 && inObject && start !== -1) {
-              const obj = line.substring(start, i + 1);
-              try { results.push(JSON.parse(obj)); } catch (parseErr) {
-                // Recovery: try smaller substring if this is multiple concatenated objects
-                // Reset state to continue scanning from after this object
-                start = -1;
-                inObject = false;
-              }
-            }
-          } else if (c === '{' || c === '}') {
-            // handled above
-          }
-        }
+      try { results.push(JSON.parse(line)); continue; } catch {}
+      // Recovery for concatenated/malformed lines
+      let depth = 0, inString = false, escapeNext = false, start = -1, inObject = false;
+      for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (escapeNext) { escapeNext = false; continue; }
+        if (c === '\\' && inString) { escapeNext = true; continue; }
+        if (c === '"') { inString = !inString; continue; }
+        if (inString) continue;
+        if (/\s/.test(c)) continue;
+        if (c === '{') { if (depth === 0) { start = i; inObject = true; } depth++; }
+        else if (c === '}') { depth--; if (depth === 0 && inObject && start !== -1) { try { results.push(JSON.parse(line.substring(start, i + 1))); } catch {} start = -1; inObject = false; } }
       }
     }
-
     return results.map((h, i) => ({
       id: `hyp-${Date.now()}-${i}`,
       text: h.reason || `Change ${h.variable}: ${h.direction} by ${h.amount}`,
@@ -253,7 +269,6 @@ function parseHypotheses(hypothesesData) {
       profitFactor: h.stats?.profit_factor,
       timestamp: h.timestamp,
       stats: h.stats,
-      // Detect Hermes parsing failure from backend's own error message
       hermesFailed: h.mode === 'hermes' && (
         (h.reason || '').includes('Hermes parse failed') ||
         (h.reason || '').includes('default fallback')
@@ -268,17 +283,9 @@ function parseKnowledge(knowledgeData) {
   try {
     const raw = typeof knowledgeData === 'string' ? knowledgeData.trim() : '';
     if (!raw) return [];
-    const entries = raw.split('\n').filter(l => l.trim()).slice(-50); // last 50
-    return entries.map((line, i) => {
+    return raw.split('\n').filter(l => l.trim()).slice(-50).map((line, i) => {
       const k = JSON.parse(line);
-      return {
-        id: `know-${Date.now()}-${i}`,
-        domain: k.domain,
-        category: k.category,
-        insight: k.insight,
-        impactScore: k.impact_score,
-        timestamp: k.timestamp,
-      };
+      return { id: `know-${Date.now()}-${i}`, domain: k.domain, category: k.category, insight: k.insight, impactScore: k.impact_score, timestamp: k.timestamp };
     });
   } catch {
     return [];
@@ -286,43 +293,66 @@ function parseKnowledge(knowledgeData) {
 }
 
 function deriveKnowledgeSummary(knowledgeData) {
-  const entries = parseKnowledge(knowledgeData)
-  if (!entries.length) return { total: 0, domains: 0 }
-  const domains = {}
-  for (const e of entries) domains[e.domain] = (domains[e.domain] || 0) + 1
+  const entries = parseKnowledge(knowledgeData);
+  if (!entries.length) return { total: 0, domains: 0 };
+  const domains = {};
+  for (const e of entries) domains[e.domain] = (domains[e.domain] || 0) + 1;
   return {
     total: entries.length,
     domains: Object.keys(domains).length,
     topDomains: Object.entries(domains).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([d, c]) => ({ domain: d, count: c })),
-  }
+  };
 }
+
+// --- Helpers ---
+
+function formatDurationMs(ms) {
+  const hours = Math.floor(ms / 3600000);
+  const mins = Math.floor((ms % 3600000) / 60000);
+  if (hours > 24) return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+  if (mins > 0) return `${hours}h ${mins}m`;
+  return `${Math.floor(ms / 1000)}s`;
+}
+
+function formatDurationSec(secs) {
+  const s = Number(secs) || 0;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m`;
+  return '<1m';
+}
+
+function formatSLTP(v) {
+  if (v == null || v === '?' || isNaN(Number(v))) return '--';
+  return `${Number(v).toFixed(2)}%`;
+}
+
+// --- Metrics ---
 
 function calcMetrics(closedTrades, openPositions, startingBalance) {
   if (!closedTrades.length) return {};
   const baseValue = startingBalance || 100000;
   const wins = closedTrades.filter(t => t.pnlPercent > 0);
   const losses = closedTrades.filter(t => t.pnlPercent <= 0);
-  const winRate = closedTrades.length ? (wins.length / closedTrades.length) * 100 : 0;
+  const winRate = (wins.length / closedTrades.length) * 100;
   const grossProfits = wins.reduce((s, t) => s + (t.pnlPercent || 0), 0);
   const grossLosses = Math.abs(losses.reduce((s, t) => s + (t.pnlPercent || 0), 0));
   const profitFactor = grossLosses > 0 ? grossProfits / grossLosses : grossProfits > 0 ? 999 : 0;
-
-  // Portfolio value derived from starting balance + cumulative realized P&L %
   const totalPct = closedTrades.reduce((s, t) => s + (t.pnlPercent || 0), 0);
-  const totalReturn = totalPct;
-  // Daily/weekly/monthly estimates from last 7 closed trades
   const recent = closedTrades.slice(-7);
-  const dailyPnlPct = recent.length > 0 ? recent.reduce((s, t) => s + (t.pnlPercent || 0), 0) / (recent.length || 1) : 0;
+  const dailyPnlPct = recent.length ? recent.reduce((s, t) => s + (t.pnlPercent || 0), 0) / recent.length : 0;
+  const totalValue = baseValue * (1 + totalPct / 100);
 
   return {
-    totalValue: baseValue * (1 + totalPct / 100),
-    totalReturn,
-    dailyPnL: baseValue * dailyPnlPct / 100,
-    dailyPnLPercent: dailyPnlPct,
-    weeklyPnL: baseValue * (dailyPnlPct * 5) / 100,
-    weeklyPnLPercent: dailyPnlPct * 5,
-    monthlyPnL: baseValue * (dailyPnlPct * 20) / 100,
-    monthlyPnLPercent: dailyPnlPct * 20,
+    totalValue: Math.round(totalValue * 100) / 100,
+    totalReturn: Math.round(totalPct * 100) / 100,
+    dailyPnL: Math.round((baseValue * dailyPnlPct / 100) * 100) / 100,
+    dailyPnLPercent: Math.round(dailyPnlPct * 100) / 100,
+    weeklyPnL: Math.round((baseValue * (dailyPnlPct * 5) / 100) * 100) / 100,
+    weeklyPnLPercent: Math.round(dailyPnlPct * 5 * 100) / 100,
+    monthlyPnL: Math.round((baseValue * (dailyPnlPct * 20) / 100) * 100) / 100,
+    monthlyPnLPercent: Math.round(dailyPnlPct * 20 * 100) / 100,
     winRate: Math.round(winRate * 10) / 10,
     profitFactor: Math.round(profitFactor * 100) / 100,
     sharpeRatio: 1.5,
@@ -337,14 +367,9 @@ function calcMetrics(closedTrades, openPositions, startingBalance) {
 
 function calcRiskMetrics(openPositions) {
   const exposureByAsset = {};
-  const exposureBySide = { long: 0, short: 0 };
-
   for (const pos of openPositions) {
-    if (!exposureByAsset[pos.asset]) exposureByAsset[pos.asset] = 0;
-    exposureByAsset[pos.asset] += Math.abs(pos.pnlPercent || 0);
-    exposureBySide[pos.side] = (exposureBySide[pos.side] || 0) + Math.abs(pos.pnlPercent || 0);
+    exposureByAsset[pos.asset] = (exposureByAsset[pos.asset] || 0) + Math.abs(pos.pnlPercent || 0);
   }
-
   const total = Object.values(exposureByAsset).reduce((s, v) => s + v, 0) || 1;
   return {
     riskScore: Math.min(100, Math.round(total * 10)),
@@ -352,45 +377,49 @@ function calcRiskMetrics(openPositions) {
     maxDrawdown: -3.0,
     currentDrawdown: openPositions.filter(p => p.pnlPercent < 0).length > 0 ? -1.5 : 0,
     exposureByAsset: Object.entries(exposureByAsset).map(([asset, val]) => ({
-      asset, total: Math.round(val * 10) / 10,
+      asset,
+      total: Math.round(val * 10) / 10,
       long: openPositions.filter(p => p.asset === asset && p.side === 'long').length,
       short: openPositions.filter(p => p.asset === asset && p.side === 'short').length,
     })),
-    exposureBySide,
+    exposureBySide: {
+      long: openPositions.filter(p => p.side === 'long').reduce((s, p) => s + Math.abs(p.pnlPercent || 0), 0),
+      short: openPositions.filter(p => p.side === 'short').reduce((s, p) => s + Math.abs(p.pnlPercent || 0), 0),
+    },
     protectionSystems: [
       { name: 'Max Position Size', active: true, value: '5%', status: 'nominal' },
-      { name: 'Stop Loss', active: true, value: '1.5%', status: 'nominal' },
+      { name: 'Stop Loss', active: true, value: '0.3%', status: 'nominal' },
       { name: 'Circuit Breaker', active: true, value: '−5% DD', status: 'nominal' },
       { name: 'Correlation Monitor', active: true, value: '0.75 max', status: 'nominal' },
     ],
     warnings: [],
+    isCalculated: true,
   };
 }
 
-function generateNotifications(closedTrades, openPositions, metrics) {
+function generateNotifications(closedTrades, openPositions, metrics, health) {
   const notifs = [];
   const now = new Date();
 
-  // Recent closed trade notifications — newest first
+  // Recent closed trades — newest first
   const sortedClosed = [...closedTrades].sort((a, b) =>
     new Date(b.exitTime || 0) - new Date(a.exitTime || 0)
   );
   for (const t of sortedClosed.slice(0, 10)) {
     const exit = new Date(t.exitTime || t.entryTime || now);
-    const diffMs = now - exit;
     notifs.push({
       id: `notif-trade-${t.id}`,
       type: 'trade',
       category: 'trade_exit',
-      title: `${t.asset} ${t.side} Closed`,
-      description: `P&L: ${t.pnl >= 0 ? '+' : ''}${t.pnlPercent?.toFixed(2) || 0}% | Reason: ${t.exitReason}`,
+      title: `${t.asset} ${t.side?.toUpperCase()} Closed`,
+      description: `P&L: ${(t.pnlPercent >= 0 ? '+' : '') + (t.pnlPercent || 0).toFixed(2)}% | ${t.exitReason || 'unknown'}`,
       timestamp: exit.toISOString(),
       read: false,
       severity: t.pnlPercent > 0 ? 'success' : 'warning',
     });
   }
 
-  // Open position notifications — newest first
+  // Open positions
   const sortedOpen = [...openPositions].sort((a, b) =>
     new Date(b.entryTime || now) - new Date(a.entryTime || now)
   );
@@ -399,21 +428,24 @@ function generateNotifications(closedTrades, openPositions, metrics) {
       id: `notif-pos-${p.id}`,
       type: 'trade',
       category: 'trade_entry',
-      title: `${p.asset} ${p.side} Position`,
-      description: `Entry: ${p.entryPrice} | Current: ${p.currentPrice} | P&L: ${p.pnlPercent?.toFixed(2) || 0}%`,
+      title: `${p.asset} ${p.side?.toUpperCase()} Position Open`,
+      description: `Entry: $${p.entryPrice?.toFixed(4)} | P&L: ${(p.pnlPercent >= 0 ? '+' : '') + (p.pnlPercent || 0).toFixed(2)}%`,
       timestamp: p.entryTime,
       read: false,
       severity: p.pnlPercent >= 0 ? 'info' : 'warning',
     });
   }
 
-  // System health notification
+  // System health — always last
+  const healthDesc = health?.hermesActive
+    ? `Hermes ${health.hermesMode ? 'auto' : 'manual'} | ${metrics.closedTrades || 0} trades`
+    : `Online | ${metrics.closedTrades || 0} trades`;
   notifs.push({
     id: 'notif-health',
     type: 'system',
     category: 'health',
-    title: 'TradeForge Online',
-    description: `Tracking ${openPositions.length} positions | ${closedTrades.length} trades total | Strategy ${metrics.currentStrategy}`,
+    title: `TradeForge ${health?.status === 'online' ? 'Online' : 'System'}`,
+    description: healthDesc,
     timestamp: now.toISOString(),
     read: false,
     severity: 'success',
@@ -423,17 +455,13 @@ function generateNotifications(closedTrades, openPositions, metrics) {
 }
 
 function calcEquityCurve(closedTrades, startingBalance) {
-  // Build equity curve from closed trades using actual starting balance
   if (!closedTrades.length) return [];
   const data = [];
   let equity = startingBalance || 100000;
   for (const t of closedTrades) {
     equity += equity * (t.pnlPercent || 0) / 100;
     const date = new Date(t.exitTime || t.entryTime);
-    data.push({
-      date: date.toISOString().split('T')[0],
-      value: Math.round(equity * 100) / 100,
-    });
+    data.push({ date: date.toISOString().split('T')[0], value: Math.round(equity * 100) / 100 });
   }
   return data;
 }
@@ -450,26 +478,91 @@ function calcEvolutionEvents(hypotheses) {
   }));
 }
 
+// --- Main Data Fetchers ---
+
+/**
+ * Fetch individual files in parallel via Bearer auth
+ * (each /debug/file/ endpoint responds in ~2s individually, vs 17-31s for combined /debug/state).
+ */
+async function fetchFile(name, token) {
+  try {
+    const res = await apiFetchBearer(`/debug/file/${name}`, token);
+    if (!res.ok) return null; // Bearer auth may fail — fall back
+    return await res.text().catch(() => null);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch all live state from Railway.
+ * Strategy: parallel requests (Bearer auth for small files, query string for large files).
+ * Expected time: ~2s for small files + ~17s for trades.jsonl = ~19-35s total.
+ * (vs 17-31s for the combined /debug/state — and without the 10s backend-preparation delay)
+ */
 export async function fetchLiveState(token, includeKnowledge = false) {
-  const res = await apiFetch('/debug/state', token);
-  if (res.status === 401) throw new Error('unauthorized');
-  if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
-  const raw = await res.json();
+  // Fire all file requests in parallel
+  const [statusTxt, heartbeatTxt, hermesTxt, phaseStateTxt, bootstrapTxt,
+         goalTxt, strategyTxt, hypothesesTxt, tradesTxt, knowledgeTxt] = await Promise.all([
+    // Small files — Bearer auth (2s each)
+    fetchFile('status.json', token),
+    fetchFile('heartbeat.json', token),
+    fetchFile('hermes_check.json', token),
+    fetchFile('phase_state.json', token),
+    fetchFile('bootstrap_proof.json', token),
+    fetchFile('goal.yaml', token),
+    fetchFile('strategy.yaml', token),
+    // Larger files — query string auth
+    apiFetch('/debug/file/hypotheses.jsonl', token).then(r => r.ok ? r.text().catch(() => '') : Promise.resolve('')),
+    // Trades (30MB) — query string auth, let it stream in the background
+    apiFetch('/debug/state', token).then(async r => {
+      if (!r.ok) return '';
+      try {
+        const raw = await r.json();
+        return raw['trades.jsonl'] || '';
+      } catch {
+        return '';
+      }
+    }),
+    // Knowledge
+    includeKnowledge
+      ? apiFetch('/debug/file/knowledge.jsonl', token).then(r => r.ok ? r.text().catch(() => '') : Promise.resolve(''))
+      : Promise.resolve(''),
+  ]);
 
-  const openPositions = parseOpenPositions(raw['status.json'] || '{}');
-  const closedTrades = parseClosedTrades(raw['trades.jsonl'] || '');
-  const hypotheses = parseHypotheses(raw['hypotheses.jsonl'] || '');
-  const strategyVersions = parseStrategy(raw['hypotheses.jsonl'] || '', raw['strategy.yaml'] || '');
-  const knowledgeEntries = includeKnowledge ? parseKnowledge(raw['knowledge.jsonl'] || '') : [];
-  const knowledgeSummary = deriveKnowledgeSummary(raw['knowledge.jsonl'] || '');
-  const paperAccount = parsePaperAccount(raw['status.json'] || '{}');
+  const raw = { 'status.json': statusTxt, 'trades.jsonl': tradesTxt, 'hypotheses.jsonl': hypothesesTxt, 'strategy.yaml': strategyTxt };
 
-  // Pass starting balance to calcMetrics so Portfolio Value uses real data (not hardcoded $100k)
-  const metrics = calcMetrics(closedTrades, openPositions, paperAccount?.starting_balance);
+  const statusJson = statusTxt ? (() => { try { return JSON.parse(statusTxt); } catch { return {}; } })() : {};
+  const openPositions = parseOpenPositions(statusJson);
+  const closedTrades = parseClosedTrades(tradesTxt || '');
+  const hypotheses = parseHypotheses(hypothesesTxt || '');
+  const strategyVersions = parseStrategy(hypothesesTxt || '', strategyTxt || '');
+  const paperAccount = parsePaperAccount(statusJson);
+
+  // Parse health from individual files (no extra request needed)
+  let health = { status: 'online', timestamp: new Date().toISOString(), consecutiveFailures: getConsecutiveFailures() };
+  try {
+    const hb = heartbeatTxt ? JSON.parse(heartbeatTxt) : {};
+    const hm = hermesTxt ? JSON.parse(hermesTxt) : {};
+    health = {
+      status: 'online',
+      timestamp: hb.timestamp || new Date().toISOString(),
+      mode: hb.mode || 'auto',
+      hermesActive: !!hm.hermes_found,
+      hermesMode: hb.mode === 'auto',
+      nimValid: !!hm.nim_api_key_valid,
+      consecutiveFailures: getConsecutiveFailures(),
+    };
+  } catch {}
+
+  const startingBalance = typeof paperAccount?.starting_balance === 'number' ? paperAccount.starting_balance : 100000;
+  const metrics = calcMetrics(closedTrades, openPositions, startingBalance);
   const risk = calcRiskMetrics(openPositions);
-  const notifications = generateNotifications(closedTrades, openPositions, metrics);
-  const equityCurveData = calcEquityCurve(closedTrades, paperAccount?.starting_balance);
+  const notifications = generateNotifications(closedTrades, openPositions, metrics, null);
+  const equityCurveData = calcEquityCurve(closedTrades, startingBalance);
   const evolutionEvents = calcEvolutionEvents(hypotheses);
+  const knowledgeEntries = includeKnowledge ? parseKnowledge(knowledgeTxt || '') : [];
+  const knowledgeSummary = deriveKnowledgeSummary(knowledgeTxt || '');
 
   return {
     openPositions,
@@ -478,6 +571,7 @@ export async function fetchLiveState(token, includeKnowledge = false) {
     hypotheses,
     metrics,
     risk,
+    health,
     notifications,
     equityCurveData,
     evolutionEvents,
@@ -489,49 +583,50 @@ export async function fetchLiveState(token, includeKnowledge = false) {
   };
 }
 
-// --- Direct accessors for specific data ---
+/**
+ * Lightweight health check.
+ * @deprecated Health is now derived from fetchLiveState directly (no separate request).
+ */
+export async function fetchHealthStatus(token) {
+  try {
+    const text = await fetchFile('heartbeat.json', token);
+    if (!text) throw new Error('no response');
+    const hb = JSON.parse(text);
+    const hm = await apiFetchBearer('/debug/file/hermes_check.json', token)
+      .then(r => r.ok ? r.json().catch(() => ({})) : ({}));
+    return {
+      status: 'online',
+      timestamp: hb.timestamp || new Date().toISOString(),
+      hermesActive: !!hm.hermes_found,
+      nimValid: !!hm.nim_api_key_valid,
+      consecutiveFailures: getConsecutiveFailures(),
+    };
+  } catch {
+    return { status: 'unreachable', timestamp: new Date().toISOString() };
+  }
+}
+
+// --- Individual Data Accessors ---
 
 export async function fetchOpenPositions(token) {
   const res = await apiFetch('/debug/state', token);
-  if (res.status === 401) throw new Error('unauthorized');
-  const raw = await res.json();
+  if (res.status === 401) throw Object.assign(new Error('unauthorized'), { isAuthError: true });
+  const raw = await res.json().catch(() => ({}));
   return parseOpenPositions(raw['status.json'] || '{}');
 }
 
 export async function fetchClosedTrades(token) {
   const res = await apiFetch('/debug/state', token);
-  if (res.status === 401) throw new Error('unauthorized');
-  const raw = await res.json();
+  if (res.status === 401) throw Object.assign(new Error('unauthorized'), { isAuthError: true });
+  const raw = await res.json().catch(() => ({}));
   return parseClosedTrades(raw['trades.jsonl'] || '');
-}
-
-export async function fetchHealthStatus(token) {
-  const res = await apiFetch('/debug/state', token);
-  if (res.status === 401) throw new Error('unauthorized');
-  const raw = await res.json();
-  try {
-    const hb = JSON.parse(raw['heartbeat.json'] || '{}');
-    const hc = JSON.parse(raw['hermes_check.json'] || '{}');
-    return {
-      status: 'online',
-      timestamp: hb.timestamp,
-      mode: hb.mode,
-      hermesActive: hc.hermes_found,
-      nimValid: hc.nim_api_key_valid,
-      hermesMode: hc.hermes_reflection_mode,
-    };
-  } catch {
-    return { status: 'unknown', timestamp: new Date().toISOString() };
-  }
 }
 
 export async function fetchStrategy(token) {
   const res = await apiFetch('/debug/state', token);
-  if (res.status === 401) throw new Error('unauthorized');
-  const raw = await res.json();
-  try {
-    return JSON.parse(raw['strategy.yaml'] || '{}');
-  } catch {
-    return {};
-  }
+  if (res.status === 401) throw Object.assign(new Error('unauthorized'), { isAuthError: true });
+  const raw = await res.json().catch(() => ({}));
+  try { return JSON.parse((raw['strategy.yaml'] || '').toString()); } catch { return {}; }
 }
+
+export { getConsecutiveFailures };

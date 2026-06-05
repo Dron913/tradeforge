@@ -20,21 +20,20 @@
   max-width: 100%;
 }
 
-/* Fixed-width timeline: outer shell constrains width, inner scrollable viewport scrolls */
+/* Wrapper: constrains to container, provides horizontal scroll */
 .timelineSectionInner {
-  min-width: 600px;
-  max-width: var(--timeline-max-width, 2000px);
   width: 100%;
 }
 
+/* The timeline row — children are fixed-width, total width grows beyond viewport */
 .timeline {
   display: flex;
   align-items: flex-start;
-  gap: var(--space-2);
-  min-height: 200px;
+  flex-wrap: nowrap;
   position: relative;
 }
 
+/* Gradient line across all version nodes */
 .timeline::before {
   content: '';
   position: absolute;
@@ -43,16 +42,18 @@
   right: 24px;
   height: 2px;
   background: linear-gradient(90deg, var(--border-subtle), var(--border-default), var(--border-subtle));
+  pointer-events: none;
 }
 
 .timelineNode {
   display: flex;
   flex-direction: column;
   align-items: center;
-  flex: 1;
-  min-width: 180px;
+  width: 160px;
+  flex-shrink: 0;
   position: relative;
   z-index: 1;
+  padding: 0 var(--space-2);
 }
 
 .nodeCircle {

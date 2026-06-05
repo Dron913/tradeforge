@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { LineChart, Line, AreaChart, Area, ResponsiveContainer } from 'recharts'
 import { TrendingUp, TrendingDown, Activity, Brain, ArrowRight, RefreshCw, Wallet, DollarSign } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { useMetrics, useOpenPositions, useClosedTrades, useEquityCurve, useHealth, usePaperAccount } from '../context/TradingContext'
+import { useMetrics, useOpenPositions, useClosedTrades, useEquityCurve, useHealth, usePaperAccount, useLivePrices } from '../context/TradingContext'
 import { TradeDetailModal, PositionDetailModal } from '../components/Modal/TradeDetailModal'
 import styles from './Dashboard.module.css'
 
@@ -39,8 +39,38 @@ export default function Dashboard() {
   const equityCurve = useEquityCurve()
   const { health, connected, loading, lastUpdated } = useHealth()
   const paperAccount = usePaperAccount()
+  const { prices: livePrices, loading: pricesLoading } = useLivePrices()
   const [selectedTrade, setSelectedTrade] = useState(null)
   const [selectedPosition, setSelectedPosition] = useState(null)
+
+  // Live price cards for each asset
+  const ASSETS = ['BTC', 'ETH', 'SOL', 'XRP']
+  const priceCards = ASSETS.map(asset => {
+    const p = livePrices[asset]
+    if (!p) return { asset, price: '--', change: '--', changeFormatted: '--', loading: true }
+    return {
+      asset,
+      price: p.formatted,
+      priceRaw: p.price,
+      change: p.changeFormatted,
+      changeRaw: p.changePercent,
+      high: p.high24h,
+      low: p.low24h,
+      volume: p.volume24h,
+      loading: false,
+    }
+  })
+
+  // Real-time P&L for open positions using live Binance prices
+  function getLivePnl(position) {
+    const asset = position.asset?.replace('/USDT', '').replace('USDT', '')
+    const livePrice = livePrices[asset]?.price
+    if (!livePrice || !position.entryPrice) return null
+    const multiplier = (position.side === 'long') ? 1 : -1
+    const ratio = livePrice / position.entryPrice
+    const pnl = (ratio - 1) * 100 * multiplier
+    return pnl
+  }
 
   // Derived stats from live data — newest first
   const recentTrades = [
@@ -88,9 +118,9 @@ export default function Dashboard() {
       {!loading && connected && (
         <div className={styles.statusBar}>
           <span className={styles.statusDotLive} />
-          <span>Live — {openPositions.length} open positions · {closedTrades.length} closed trades</span>
+          <span>Live — {openPositions.length} open · {closedTrades.length} closed · Prices update every 1s</span>
           {lastUpdated && <span className={styles.lastUpdated}>
-            Updated {new Date(lastUpdated).toLocaleTimeString()}
+            Backend {new Date(lastUpdated).toLocaleTimeString()}
           </span>}
         </div>
       )}
@@ -157,6 +187,36 @@ export default function Dashboard() {
             )}
           </div>
         </div>
+      </div>
+
+      {/* Live Crypto Prices — updates every second */}
+      <div className={styles.priceGrid}>
+        {priceCards.map(card => (
+          <div key={card.asset} className={styles.priceCard}>
+            <div className={styles.priceAsset}>{card.asset}/USDT</div>
+            <div className={styles.priceValue}>
+              {card.loading ? (
+                <span className={styles.priceLoading}>--</span>
+              ) : (
+                card.price
+              )}
+            </div>
+            <div className={`${styles.priceChange} ${card.changeRaw >= 0 ? styles.priceUp : styles.priceDown}`}>
+              {card.loading ? '--' : (
+                <>
+                  {card.changeRaw >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                  <span>{card.change}</span>
+                </>
+              )}
+            </div>
+            {!card.loading && (
+              <div className={styles.priceMeta}>
+                <span>H: {card.high?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: card.asset === 'XRP' || card.asset === 'SOL' ? 4 : 2 })}</span>
+                <span>L: {card.low?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: card.asset === 'XRP' || card.asset === 'SOL' ? 4 : 2 })}</span>
+              </div>
+            )}
+          </div>
+        ))}
       </div>
 
       {/* Paper Account Transparency Panel */}
@@ -303,14 +363,27 @@ export default function Dashboard() {
                     </td>
                     <td className={styles.mono}>{formatCurrency(trade.entryPrice)}</td>
                     <td className={styles.mono}>
-                      {trade.currentPrice
+                      {trade._type === 'open' && livePrices ? (() => {
+                        const asset = (trade.asset || '').replace('/USDT', '').replace('USDT', '')
+                        const lp = livePrices[asset]
+                        return lp ? formatCurrency(lp.price) : formatCurrency(trade.currentPrice || trade.entryPrice)
+                      })() : trade.currentPrice
                         ? formatCurrency(trade.currentPrice)
                         : trade.exitPrice
                           ? formatCurrency(trade.exitPrice)
                           : '-'}
                     </td>
-                    <td className={`${styles.mono} ${(trade.pnlPercent || 0) >= 0 ? styles.positive : styles.negative}`}>
-                      {formatPnlPercent(trade.pnlPercent)}
+                    <td className={`${styles.mono} ${(() => {
+                      if (trade._type === 'open' && livePrices) {
+                        const pnl = getLivePnl(trade)
+                        return pnl !== null ? (pnl >= 0 ? styles.positive : styles.negative) : ''
+                      }
+                      return (trade.pnlPercent || 0) >= 0 ? styles.positive : styles.negative
+                    })()}`}>
+                      {trade._type === 'open' && livePrices ? (() => {
+                        const pnl = getLivePnl(trade)
+                        return pnl !== null ? formatPnlPercent(pnl) : '--'
+                      })() : formatPnlPercent(trade.pnlPercent)}
                     </td>
                     <td className={styles.muted}>{trade.duration || '--'}</td>
                   </tr>

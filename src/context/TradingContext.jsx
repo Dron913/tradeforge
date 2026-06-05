@@ -1,139 +1,186 @@
 /**
  * TradingContext — provides live TradeForge data to all pages.
  * Polls Railway backend every 30s. Handles session-based auth.
+ *
+ * Connectivity approach:
+ * 1. fetchAuthStatus() — ~1-2s, determines if auth is needed and confirms backend is reachable
+ * 2. fetchLiveState() — ~15-25s for 35MB response, fetches all trading data
+ * 3. On error: either "Backend offline" (network) or "Session expired" (401)
  */
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import {
   fetchLiveState,
-  fetchHealthStatus,
   fetchAuthStatus,
   postLogin,
   postLogout,
+  getConsecutiveFailures,
 } from '../services/railwayApi';
+import { fetchLivePrices } from '../services/cryptoPriceService';
 
 const TradingContext = createContext(null);
 const SESSION_KEY = 'tf_auth_token';
+const POLL_INTERVAL = 30000; // 30s — poll after initial load
 
 export function TradingProvider({ children }) {
-  const [state, setState] = useState({
-    data: null,
-    loading: true,
-    error: null,
-    connected: false,
-    health: null,
-    lastUpdated: null,
-    // Auth state
-    authToken: sessionStorage.getItem(SESSION_KEY) || null,
-    authRequired: false,
-    authChecked: false,
-    loginError: null,
-    loggingIn: false,
-  });
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [connected, setConnected] = useState(false);
+  const [health, setHealth] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [authToken, setAuthToken] = useState(() => sessionStorage.getItem(SESSION_KEY) || null);
+  const [authRequired, setAuthRequired] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [loginError, setLoginError] = useState(null);
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [livePrices, setLivePrices] = useState({});
+  const [pricesLoading, setPricesLoading] = useState(true);
+
+  // Ref to always hold current token — avoids stale closures in the polling load function
+  const tokenRef = useRef(authToken);
+
+  useEffect(() => {
+    tokenRef.current = authToken;
+  }, [authToken]);
+
+  // Live crypto price updates — runs every 1s, independent of Railway auth/data
+  useEffect(() => {
+    const tick = () => {
+      fetchLivePrices().then(prices => {
+        setLivePrices(prices);
+        setPricesLoading(false);
+      });
+    };
+    tick(); // immediate first load
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const load = useCallback(async () => {
-    const { authToken, authRequired } = state;
-    if (authRequired && !authToken) return; // Can't load without token
-    try {
-      const [live, health] = await Promise.all([
-        fetchLiveState(authToken),
-        fetchHealthStatus(authToken),
-      ]);
-      setState(s => ({
-        ...s,
-        data: live,
-        health,
-        error: null,
-        connected: true,
-        loading: false,
-        lastUpdated: new Date(),
-      }));
-    } catch (e) {
-      setState(s => ({
-        ...s,
-        error: e.message,
-        connected: false,
-        loading: s.authToken ? s.loading : false,
-      }));
-    }
-  }, [state.authToken, state.authRequired]);
+    const token = tokenRef.current;
+    if (authRequired && !token) return; // Can't load without token
 
-  // On mount: check auth status, then load data
+    // Show loading state while fetching full data (takes 15-25s for 35MB)
+    setLoading(true);
+    setError(null);
+
+    try {
+      const live = await fetchLiveState(token);
+
+      setData(live);
+      setHealth(live.health);
+      setConnected(true);
+      setLastUpdated(new Date());
+      setError(null);
+    } catch (e) {
+      if (e.isAuthError) {
+        // Session expired — clear token and prompt re-auth
+        sessionStorage.removeItem(SESSION_KEY);
+        setAuthToken(null);
+        setAuthRequired(true);
+        setError('Session expired. Please log in again.');
+        setConnected(false);
+      } else {
+        setError(e.message || 'Failed to connect to TradeForge');
+        setConnected(false);
+      }
+    } finally {
+      setLoading(false); // Always clear loading — no stuck states
+    }
+  }, [authRequired]); // Only authRequired determines behavior; token via tokenRef
+
+  // On mount: check auth status (also a quick connectivity check)
+  // This resolves in ~1-2s. If it fails, we know immediately the backend is offline.
   useEffect(() => {
     const init = async () => {
       try {
         const status = await fetchAuthStatus(null);
-        setState(s => ({
-          ...s,
-          authRequired: status.authEnabled || false,
-          authChecked: true,
-        }));
-        // Only load if auth not required (or token already in session)
-        if (!status.authEnabled || sessionStorage.getItem(SESSION_KEY)) {
-          // token will be read from state after this update
-          load();
-        } else {
-          // Auth is required, don't try to fetch without token
-          setState(s => ({ ...s, loading: false }));
+        setAuthRequired(status?.authEnabled || false);
+        setAuthChecked(true);
+
+        if (status?.authEnabled && !sessionStorage.getItem(SESSION_KEY)) {
+          // Auth required but no token — show login page (NOT "backend offline")
+          setLoading(false);
+          return;
         }
-      } catch {
-        // Network error — assume no auth required
-        setState(s => ({ ...s, authRequired: false, authChecked: true }));
+
+        // Backend confirmed reachable — proceed to load full data
         load();
+      } catch {
+        // Network error → backend is unreachable
+        setAuthRequired(false);
+        setAuthChecked(true);
+        setError('Backend offline — Railway may be restarting. Retrying in 30s...');
+        setConnected(false);
+        setLoading(false);
+
+        // Auto-refresh after 30s if backend was unreachable
+        const id = setTimeout(load, 30000);
+        return () => clearTimeout(id);
       }
     };
     init();
-  }, []); // eslint-disable-line
+  }, [load]); // load is stable — this runs once on mount
 
-  // Polling with token dependency
+  // Polling after initial load (token via tokenRef — auto-updates after login/logout)
   useEffect(() => {
-    if (!state.authChecked) return;
-    if (state.authRequired && !state.authToken) return;
+    if (!authChecked) return;
+    if (authRequired && !authToken) return;
 
-    load();
-    const id = setInterval(load, 30000);
+    const id = setInterval(load, POLL_INTERVAL);
     return () => clearInterval(id);
-  }, [state.authToken, state.authRequired, state.authChecked, load]);
+  }, [authChecked, authRequired, tokenRef, load]); // tokenRef changes trigger load on login/logout
 
-  // Login handler
   const login = useCallback(async (password) => {
-    setState(s => ({ ...s, loggingIn: true, loginError: null }));
+    setLoggingIn(true);
+    setLoginError(null);
     try {
       const { token } = await postLogin(password);
       sessionStorage.setItem(SESSION_KEY, token);
-      setState(s => ({
-        ...s,
-        authToken: token,
-        loggingIn: false,
-        loginError: null,
-      }));
-      // Now load data with token
-      if (state.authRequired) load();
-    } catch (e) {
-      setState(s => ({ ...s, loggingIn: false, loginError: e.message }));
-    }
-  }, [state.authRequired, load]);
+      setAuthToken(token);
 
-  // Logout handler
+      // After login: re-check auth (in case it was disabled but now requires),
+      // then load state with fresh token
+      load();
+    } catch (e) {
+      setLoginError(e.message || 'Login failed');
+    } finally {
+      setLoggingIn(false);
+    }
+  }, [load]);
+
   const logout = useCallback(async () => {
     try { await postLogout(); } catch {}
     sessionStorage.removeItem(SESSION_KEY);
-    setState(s => ({
-      ...s,
-      authToken: null,
-      data: null,
-      connected: false,
-    }));
-    // Check again after logout in case user re-locks
+    setAuthToken(null);
+    setData(null);
+    setConnected(false);
     const status = await fetchAuthStatus(null);
-    setState(s => ({
-      ...s,
-      authRequired: status.authEnabled || false,
-    }));
+    setAuthRequired(status?.authEnabled || false);
   }, []);
 
+  const value = {
+    data,
+    loading,
+    error,
+    connected,
+    health,
+    lastUpdated,
+    authToken,
+    authRequired,
+    authChecked,
+    loginError,
+    loggingIn,
+    login,
+    logout,
+    consecutiveFailures: getConsecutiveFailures(),
+    livePrices,
+    pricesLoading,
+  };
+
   return (
-    <TradingContext.Provider value={{ ...state, login, logout }}>
+    <TradingContext.Provider value={value}>
       {children}
     </TradingContext.Provider>
   );
@@ -145,7 +192,6 @@ export function useTrading() {
   return ctx;
 }
 
-// Convenience hooks for specific data slices
 export function useMetrics() {
   const { data } = useTrading();
   return data?.metrics || {};
@@ -207,4 +253,9 @@ export function useHealth() {
 export function useAuth() {
   const { authToken, authRequired, authChecked, loggingIn, loginError, login, logout } = useTrading();
   return { authToken, authRequired, authChecked, loggingIn, loginError, login, logout };
+}
+
+export function useLivePrices() {
+  const { livePrices, pricesLoading } = useTrading();
+  return { prices: livePrices, loading: pricesLoading };
 }

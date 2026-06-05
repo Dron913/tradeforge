@@ -5,15 +5,17 @@ import styles from './AIReflection.module.css'
 // Build reflection cards from live hypothesis data
 function buildReflectionCycles(hypotheses, closedTrades) {
   if (!hypotheses.length) return []
-  // Group hypotheses by timestamp/version to form cycles
+  // Group hypotheses by date — newest-first iteration so Object.entries gives newest dates first
   const byTime = {}
-  for (const h of hypotheses.reverse()) {
+  for (const h of [...hypotheses].reverse()) {
     const key = h.timestamp?.split('T')[0] || h.timestamp
     if (!byTime[key]) byTime[key] = []
     byTime[key].push(h)
   }
-  return Object.entries(byTime).map(([time, hypos], i) => ({
-    id: `ref-${hypotheses.length - i}`,
+  const entries = Object.entries(byTime)
+  const numEntries = entries.length
+  return entries.map(([time, hypos], idx) => ({
+    id: `ref-${numEntries - idx}`,
     status: 'completed',
     startedAt: time,
     completedAt: time,

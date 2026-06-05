@@ -496,15 +496,15 @@ async function fetchFile(name, token) {
 
 /**
  * Fetch all live state from Railway.
- * Strategy: parallel requests (Bearer auth for small files, query string for large files).
- * Expected time: ~2s for small files + ~17s for trades.jsonl = ~19-35s total.
- * (vs 17-31s for the combined /debug/state — and without the 10s backend-preparation delay)
+ * Uses Bearer auth for all requests (CORS preflight now passes Auth header).
+ * All requests fire in parallel — expected time: ~20-30s (trades.jsonl at 35MB is the bottleneck).
+ * Railway egress: ~20 Mbps → 35MB / 2.5 MB/s ≈ 14s for trades + 2s per small file ≈ 20s total.
  */
 export async function fetchLiveState(token, includeKnowledge = false) {
-  // Fire all file requests in parallel
+  // Fire all file requests in parallel — ALL use Bearer auth (CORS fix in Railway backend)
   const [statusTxt, heartbeatTxt, hermesTxt, phaseStateTxt, bootstrapTxt,
          goalTxt, strategyTxt, hypothesesTxt, tradesTxt, knowledgeTxt] = await Promise.all([
-    // Small files — Bearer auth (2s each)
+    // JSON state files — Bearer auth (~2s each, all fire in parallel)
     fetchFile('status.json', token),
     fetchFile('heartbeat.json', token),
     fetchFile('hermes_check.json', token),
@@ -512,22 +512,11 @@ export async function fetchLiveState(token, includeKnowledge = false) {
     fetchFile('bootstrap_proof.json', token),
     fetchFile('goal.yaml', token),
     fetchFile('strategy.yaml', token),
-    // Larger files — query string auth
-    apiFetch('/debug/file/hypotheses.jsonl', token).then(r => r.ok ? r.text().catch(() => '') : Promise.resolve('')),
-    // Trades (30MB) — query string auth, let it stream in the background
-    apiFetch('/debug/state', token).then(async r => {
-      if (!r.ok) return '';
-      try {
-        const raw = await r.json();
-        return raw['trades.jsonl'] || '';
-      } catch {
-        return '';
-      }
-    }),
-    // Knowledge
-    includeKnowledge
-      ? apiFetch('/debug/file/knowledge.jsonl', token).then(r => r.ok ? r.text().catch(() => '') : Promise.resolve(''))
-      : Promise.resolve(''),
+    // JSONL data files — Bearer auth (~2-15s each, also parallel)
+    fetchFile('hypotheses.jsonl', token),
+    fetchFile('trades.jsonl', token),
+    // Knowledge (optional)
+    includeKnowledge ? fetchFile('knowledge.jsonl', token) : Promise.resolve(''),
   ]);
 
   const raw = { 'status.json': statusTxt, 'trades.jsonl': tradesTxt, 'hypotheses.jsonl': hypothesesTxt, 'strategy.yaml': strategyTxt };

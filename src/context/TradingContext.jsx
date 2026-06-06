@@ -39,10 +39,16 @@ export function TradingProvider({ children }) {
 
   // Ref to always hold current token — avoids stale closures in the polling load function
   const tokenRef = useRef(authToken);
+  // Ref for authRequired — avoids stale closure in load callback
+  const authRequiredRef = useRef(authRequired);
 
   useEffect(() => {
     tokenRef.current = authToken;
   }, [authToken]);
+
+  useEffect(() => {
+    authRequiredRef.current = authRequired;
+  }, [authRequired]);
 
   // Live crypto price updates — runs every 1s, independent of Railway auth/data
   useEffect(() => {
@@ -59,7 +65,7 @@ export function TradingProvider({ children }) {
 
   const load = useCallback(async () => {
     const token = tokenRef.current;
-    if (authRequired && !token) return; // Can't load without token
+    if (authRequiredRef.current && !token) return; // Can't load without token
 
     // Show loading state while fetching full data (takes 15-25s for 35MB)
     setLoading(true);
@@ -80,15 +86,14 @@ export function TradingProvider({ children }) {
         setAuthToken(null);
         setAuthRequired(true);
         setError('Session expired. Please log in again.');
-        setConnected(false);
       } else {
         setError(e.message || 'Failed to connect to TradeForge');
-        setConnected(false);
       }
+      setConnected(false);
     } finally {
       setLoading(false); // Always clear loading — no stuck states
     }
-  }, [authRequired]); // Only authRequired determines behavior; token via tokenRef
+  }, []); // Stable — token via tokenRef, authRequired via authRequiredRef
 
   // On mount: check auth status (also a quick connectivity check)
   // This resolves in ~1-2s. If it fails, we know immediately the backend is offline.

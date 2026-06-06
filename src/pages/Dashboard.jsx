@@ -72,11 +72,18 @@ export default function Dashboard() {
     return pnl
   }
 
-  // Derived stats from live data — newest first
+  // Derived stats from live data — newest first (sorted by timestamp descending)
   const recentTrades = [
-    ...openPositions.slice(-3).reverse().map(p => ({ ...p, _type: 'open' })),
-    ...closedTrades.slice(-3).reverse().map(t => ({ ...t, _type: 'closed' })),
+    ...openPositions.map(p => ({ ...p, _type: 'open' })),
+    ...closedTrades.map(t => ({ ...t, _type: 'closed' })),
   ]
+    .sort((a, b) => {
+      // Sort by timestamp (newest first: b - a)
+      const timeA = a.timestamp || a.exitTime || a.entryTime || '';
+      const timeB = b.timestamp || b.exitTime || b.entryTime || '';
+      return timeB.localeCompare(timeA); // ascending string comparison for newest first
+    })
+    .slice(0, 6); // Show up to 6 recent trades
 
   // Best and worst trade
   let bestTrade = null, worstTrade = null
@@ -348,7 +355,7 @@ export default function Dashboard() {
               <tbody>
                 {recentTrades.map(trade => (
                   <tr
-                    key={trade.id}
+                    key={`${trade.asset}-${trade.timestamp || trade.exitTime || trade.entryTime}-${trade._type}`}
                     onClick={() => trade._type === 'open' ? setSelectedPosition(trade) : setSelectedTrade(trade)}
                     title="Click for trade details"
                     style={{ cursor: 'pointer' }}

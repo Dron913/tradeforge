@@ -90,16 +90,25 @@ function apiFetchBearer(path, token) {
 
 export async function fetchAuthStatus() {
   try {
-    const res = await apiFetch('/api/auth/status', null);
-    if (res.status === 401) return { authEnabled: true, unlocked: false, tokenValid: false };
-    if (!res.ok) throw new Error(`API ${res.status}`);
-    return res.json();
-  } catch (err) {
-    // On network error, assume no auth required and continue
-    if (!err.status && !err.isAuthError) {
+    // Use a 5-second timeout — don't hang the login screen waiting for Railway.
+    // If Railway is slow/unavailable, treat as no-auth-required so user can try login.
+    const res = await Promise.race([
+      apiFetch('/api/auth/status', null),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('auth_check_timeout')), 5000)),
+    ]);
+    if (!res) {
+      // fetch failed / timed out — assume no auth required
       return { authEnabled: false, unlocked: true, tokenValid: true };
     }
-    throw err;
+    if (res.status === 401) return { authEnabled: true, unlocked: false, tokenValid: false };
+    if (!res.ok) {
+      // non-OK status — treat as no auth (user can still proceed)
+      return { authEnabled: false, unlocked: true, tokenValid: true };
+    }
+    return res.json();
+  } catch (err) {
+    // On network error or timeout, assume no auth required and continue
+    return { authEnabled: false, unlocked: true, tokenValid: true };
   }
 }
 

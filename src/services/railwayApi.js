@@ -93,7 +93,10 @@ function apiFetch(path, token) {
  */
 function apiFetchBearer(path, token) {
   const separator = path.includes('?') ? '&' : '?';
-  const safePath = path.replace('/api/debug/file/', '/worker/file/');
+  // Railway edge intercepts /api/debug/* → returns stub "OK", never reaches backend.
+  // /debug/file/* is also intercepted. Use /worker/file/ path exclusively so Railway
+  // edge passes requests directly to the backend (which now serves them without auth).
+  const safePath = path.replace('/api/debug/file/', '/worker/file/').replace('/debug/file/', '/worker/file/');
   return fetchWithRetry(`${API_BASE}${safePath}${separator}token=${encodeURIComponent(token)}`, {
     headers: { 'Cache-Control': 'no-store' },
   }, token);

@@ -63,8 +63,11 @@ export function TradingProvider({ children }) {
     return () => clearInterval(id);
   }, []);
 
-  const load = useCallback(async () => {
-    const token = tokenRef.current;
+  const load = useCallback(async (overrideToken) => {
+    // Use overrideToken if provided (e.g. right after login, before re-render),
+    // otherwise fall back to tokenRef (initialized from sessionStorage on mount,
+    // kept in sync via effect below).
+    const token = overrideToken !== undefined ? overrideToken : tokenRef.current;
     if (authRequiredRef.current && !token) return; // Can't load without token
 
     // Show loading state while fetching full data (takes 15-25s for 35MB)
@@ -145,9 +148,9 @@ export function TradingProvider({ children }) {
       sessionStorage.setItem(SESSION_KEY, token);
       setAuthToken(token);
 
-      // After login: re-check auth (in case it was disabled but now requires),
-      // then load state with fresh token
-      load();
+      // Pass token directly so load() doesn't rely on tokenRef (which updates
+      // only after the next re-render, but load() runs immediately after setAuthToken).
+      load(token);
     } catch (e) {
       setLoginError(e.message || 'Login failed');
     } finally {

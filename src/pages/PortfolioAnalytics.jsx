@@ -389,7 +389,7 @@ export default function PortfolioAnalytics() {
             </div>
             <div className={styles.statItem}>
               <span className={styles.statLabel}>Sharpe Ratio</span>
-              <span className={styles.statValue}>{(metrics.sharpeRatio || 1.5).toFixed(2)}</span>
+              <span className={styles.statValue}>{metrics.sharpeRatio != null ? metrics.sharpeRatio.toFixed(2) : '--'}</span>
             </div>
           </div>
         </div>

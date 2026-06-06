@@ -1,5 +1,5 @@
 import { AlertTriangle, AlertCircle, Shield, TrendingDown } from 'lucide-react'
-import { useRisk } from '../context/TradingContext'
+import { useRisk, useMetrics, usePaperAccount } from '../context/TradingContext'
 import styles from './RiskManagement.module.css'
 
 function RiskGauge({ score }) {
@@ -10,9 +10,9 @@ function RiskGauge({ score }) {
     return 'var(--loss)'
   }
 
-  const color = getColor(score)
+  const color = getColor(score ?? 0)
   const circumference = Math.PI * 160
-  const offset = circumference - (score / 100) * circumference
+  const offset = circumference - ((score ?? 0) / 100) * circumference
 
   return (
     <div className={styles.gaugeContainer}>
@@ -31,7 +31,7 @@ function RiskGauge({ score }) {
         />
       </svg>
       <div className={styles.gaugeValue}>
-        <div className={styles.gaugeNumber} style={{ color }}>{score}</div>
+        <div className={styles.gaugeNumber} style={{ color }}>{score ?? '--'}</div>
         <div className={styles.gaugeLabel}>Risk Score</div>
       </div>
     </div>
@@ -67,21 +67,22 @@ function ExposureByAsset({ risk }) {
       <div className={styles.sideDistribution}>
         <div className={styles.sideItem}>
           <div className={styles.sideLabel}>Long</div>
-          <div className={`${styles.sideValue} ${styles.long}`}>{sideDist.long}%</div>
+          <div className={`${styles.sideValue} ${styles.long}`}>{sideDist.long.toFixed(1)}%</div>
         </div>
         <div className={styles.sideItem}>
           <div className={styles.sideLabel}>Short</div>
-          <div className={`${styles.sideValue} ${styles.short}`}>{sideDist.short}%</div>
+          <div className={`${styles.sideValue} ${styles.short}`}>{sideDist.short.toFixed(1)}%</div>
         </div>
       </div>
     </div>
   )
 }
 
-function DrawdownMonitor({ risk }) {
-  const maxDD = Math.abs(risk.maxDrawdown || 5.0)
-  const currentDD = Math.abs(risk.currentDrawdown || 0)
+function DrawdownMonitor({ risk, startingBalance }) {
+  const maxDD = Math.abs(risk.maxDrawdown ?? 0)
+  const currentDD = Math.abs(risk.currentDrawdown ?? 0)
   const recoveryProgress = maxDD > 0 ? ((maxDD - currentDD) / maxDD) * 100 : 100
+  const maxLossUsd = startingBalance ? Math.round((startingBalance * Math.abs(risk.maxDrawdown ?? 0) / 100) * 100) / 100 : null
   return (
     <div className={styles.drawdownSection}>
       <h2 className={styles.sectionTitle}>Drawdown Monitor</h2>
@@ -89,13 +90,13 @@ function DrawdownMonitor({ risk }) {
         <div className={styles.drawdownMetric}>
           <div className={styles.drawdownLabel}>Current Drawdown</div>
           <div className={`${styles.drawdownValue} ${styles.current}`}>
-            {(risk.currentDrawdown || 0).toFixed(1)}%
+            {(risk.currentDrawdown ?? 0) >= 0 ? '+' : ''}{(risk.currentDrawdown ?? 0).toFixed(1)}%
           </div>
         </div>
         <div className={styles.drawdownMetric}>
           <div className={styles.drawdownLabel}>Maximum Historical</div>
           <div className={`${styles.drawdownValue} ${styles.max}`}>
-            {-(risk.maxDrawdown || 5.0).toFixed(1)}%
+            {(risk.maxDrawdown ?? 0).toFixed(1)}%
           </div>
         </div>
         <div className={styles.drawdownMetric}>
@@ -109,10 +110,17 @@ function DrawdownMonitor({ risk }) {
         <div className={styles.progressFill} style={{ width: `${Math.min(recoveryProgress, 100)}%` }} />
       </div>
       <div className={styles.progressLabels}>
-        <span>-{(risk.maxDrawdown || 5.0).toFixed(1)}%</span>
+        <span>{(risk.maxDrawdown ?? 0).toFixed(1)}%</span>
         <span>Recovery from max DD</span>
         <span>0%</span>
       </div>
+      {maxLossUsd !== null && risk.maxDrawdown != null && risk.maxDrawdown !== 0 && (
+        <div style={{ textAlign: 'center', marginTop: 'var(--space-3)', fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
+          Estimated max loss at peak: <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--loss)' }}>
+            -${maxLossUsd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+          </span>
+        </div>
+      )}
     </div>
   )
 }
@@ -175,8 +183,16 @@ function RiskWarnings({ risk }) {
 
 export default function RiskManagement() {
   const risk = useRisk()
+  const metrics = useMetrics()
+  const paperAccount = usePaperAccount()
+  const startingBalance = paperAccount?.starting_balance || 100000
   const sideDist = risk.exposureBySide || { long: 0, short: 0 }
-  const totalExposure = sideDist.long + sideDist.short || 100
+  const totalExposure = (sideDist.long || 0) + (sideDist.short || 0) || 100
+
+  // Calculate max loss from maxDrawdown
+  const maxLossUsd = risk.maxDrawdown != null && risk.maxDrawdown !== 0
+    ? -(startingBalance * Math.abs(risk.maxDrawdown) / 100)
+    : null
 
   return (
     <div className={styles.container}>
@@ -187,15 +203,21 @@ export default function RiskManagement() {
           <div className={styles.metricsGrid} style={{ width: '100%' }}>
             <div className={styles.metricItem}>
               <div className={styles.metricLabel}>Risk/Trade</div>
-              <div className={styles.metricValue}>{risk.riskPerTrade?.toFixed(1) || '1.5'}%</div>
+              <div className={styles.metricValue}>{risk.riskPerTrade?.toFixed(1) || '--'}%</div>
             </div>
             <div className={styles.metricItem}>
               <div className={styles.metricLabel}>Max Loss</div>
-              <div className={styles.metricValue}>-$2,000</div>
+              <div className={styles.metricValue}>
+                {maxLossUsd !== null
+                  ? `-$${Math.abs(maxLossUsd).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+                  : '--'}
+              </div>
             </div>
             <div className={styles.metricItem}>
               <div className={styles.metricLabel}>Protection</div>
-              <div className={styles.metricValue}>Active</div>
+              <div className={styles.metricValue}>
+                {risk.protectionSystems?.length > 0 ? 'Active' : 'Offline'}
+              </div>
             </div>
           </div>
         </div>
@@ -209,7 +231,7 @@ export default function RiskManagement() {
               <div style={{ display: 'flex', gap: 'var(--space-4)', marginBottom: 'var(--space-4)' }}>
                 <div className={styles.sideItem} style={{ flex: sideDist.long || 1 }}>
                   <div className={styles.sideLabel}>Long Positions</div>
-                  <div className={`${styles.sideValue} ${styles.long}`}>{sideDist.long}%</div>
+                  <div className={`${styles.sideValue} ${styles.long}`}>{sideDist.long.toFixed(1)}%</div>
                 </div>
               </div>
               <div style={{
@@ -220,7 +242,7 @@ export default function RiskManagement() {
                 display: 'flex'
               }}>
                 <div style={{
-                  width: `${totalExposure > 0 ? (sideDist.long / totalExposure) * 100 : 50}%`,
+                  width: `${totalExposure > 0 ? ((sideDist.long || 0) / totalExposure) * 100 : 50}%`,
                   background: 'linear-gradient(180deg, var(--accent-cyan-dim), var(--accent-cyan))',
                   display: 'flex',
                   alignItems: 'center',
@@ -229,10 +251,10 @@ export default function RiskManagement() {
                   fontWeight: 600,
                   color: 'var(--bg-void)'
                 }}>
-                  L {sideDist.long}%
+                  L {(sideDist.long || 0).toFixed(0)}%
                 </div>
                 <div style={{
-                  width: `${totalExposure > 0 ? (sideDist.short / totalExposure) * 100 : 50}%`,
+                  width: `${totalExposure > 0 ? ((sideDist.short || 0) / totalExposure) * 100 : 50}%`,
                   background: 'linear-gradient(180deg, var(--loss-dim), var(--loss))',
                   display: 'flex',
                   alignItems: 'center',
@@ -241,14 +263,14 @@ export default function RiskManagement() {
                   fontWeight: 600,
                   color: 'white'
                 }}>
-                  S {sideDist.short}%
+                  S {(sideDist.short || 0).toFixed(0)}%
                 </div>
               </div>
               <div style={{ marginTop: 'var(--space-4)', display: 'flex', justifyContent: 'space-around' }}>
                 <div style={{ textAlign: 'center' }}>
                   <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>Total Exposure</div>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-lg)', fontWeight: 600 }}>
-                    {totalExposure}%
+                    {totalExposure.toFixed(0)}%
                   </div>
                 </div>
               </div>
@@ -257,7 +279,7 @@ export default function RiskManagement() {
         </div>
       </div>
 
-      <DrawdownMonitor risk={risk} />
+      <DrawdownMonitor risk={risk} startingBalance={startingBalance} />
 
       <div className={styles.protectionSection}>
         <ProtectionSystems risk={risk} />

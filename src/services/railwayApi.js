@@ -346,8 +346,30 @@ function formatSLTP(v) {
 // --- Metrics ---
 
 function calcMetrics(closedTrades, openPositions, startingBalance) {
-  if (!closedTrades.length) return {};
   const baseValue = startingBalance || 100000;
+  if (!closedTrades.length) {
+    return {
+      totalValue: baseValue,
+      totalReturn: 0,
+      dailyPnL: 0,
+      dailyPnLPercent: 0,
+      weeklyPnL: 0,
+      weeklyPnLPercent: 0,
+      monthlyPnL: 0,
+      monthlyPnLPercent: 0,
+      winRate: 0,
+      profitFactor: 0,
+      sharpeRatio: null,
+      maxDrawdown: 0,
+      activeTrades: openPositions.length,
+      closedTrades: 0,
+      currentStrategy: 'v0008',
+      aiStatus: 'learning',
+      tradesAnalyzed: 0,
+    };
+  }
+
+  // --- Basic aggregates from real trades ---
   const wins = closedTrades.filter(t => t.pnlPercent > 0);
   const losses = closedTrades.filter(t => t.pnlPercent <= 0);
   const winRate = (wins.length / closedTrades.length) * 100;
@@ -355,42 +377,111 @@ function calcMetrics(closedTrades, openPositions, startingBalance) {
   const grossLosses = Math.abs(losses.reduce((s, t) => s + (t.pnlPercent || 0), 0));
   const profitFactor = grossLosses > 0 ? grossProfits / grossLosses : grossProfits > 0 ? 999 : 0;
   const totalPct = closedTrades.reduce((s, t) => s + (t.pnlPercent || 0), 0);
-  const recent = closedTrades.slice(-7);
-  const dailyPnlPct = recent.length ? recent.reduce((s, t) => s + (t.pnlPercent || 0), 0) / recent.length : 0;
   const totalValue = baseValue * (1 + totalPct / 100);
+
+  // --- Equity curve for maxDrawdown + sharpeRatio ---
+  const equityCurve = [];
+  let equity = baseValue;
+  for (const t of closedTrades) {
+    equity += equity * (t.pnlPercent || 0) / 100;
+    const date = new Date(t.exitTime || t.entryTime);
+    equityCurve.push({ equity, date, pnlPct: t.pnlPercent });
+  }
+
+  // --- Max Drawdown: walking equity peak ---
+  let peak = baseValue;
+  let maxDrawdown = 0;
+  for (const pt of equityCurve) {
+    if (pt.equity > peak) peak = pt.equity;
+    const dd = (peak - pt.equity) / peak * 100;
+    if (dd > maxDrawdown) maxDrawdown = dd;
+  }
+  maxDrawdown = Math.round(-maxDrawdown * 100) / 100;
+
+  // --- Sharpe Ratio: mean / stdDev * sqrt(252) ---
+  let sharpeRatio = null;
+  if (equityCurve.length >= 5) {
+    const returns = equityCurve.map(pt => pt.pnlPct);
+    const mean = returns.reduce((s, r) => s + r, 0) / returns.length;
+    const variance = returns.reduce((s, r) => s + Math.pow(r - mean, 2), 0) / Math.max(returns.length - 1, 1);
+    const stdDev = Math.sqrt(variance);
+    if (stdDev > 0) {
+      sharpeRatio = Math.round((mean / stdDev) * Math.sqrt(252) * 100) / 100;
+    } else {
+      sharpeRatio = mean > 0 ? 999 : 0;
+    }
+  }
+
+  // --- Weekly P&L: actual trades in last 7 days ---
+  const now = new Date();
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 3600 * 1000);
+  const weeklyTrades = closedTrades.filter(t => {
+    const d = new Date(t.exitTime || t.entryTime);
+    return d >= sevenDaysAgo;
+  });
+  const weeklyPnLPct = weeklyTrades.reduce((s, t) => s + (t.pnlPercent || 0), 0);
+  const weeklyPnL = Math.round((baseValue * weeklyPnLPct / 100) * 100) / 100;
+
+  // --- Monthly P&L: actual trades in last 30 days ---
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 3600 * 1000);
+  const monthlyTrades = closedTrades.filter(t => {
+    const d = new Date(t.exitTime || t.entryTime);
+    return d >= thirtyDaysAgo;
+  });
+  const monthlyPnLPct = monthlyTrades.reduce((s, t) => s + (t.pnlPercent || 0), 0);
+  const monthlyPnL = Math.round((baseValue * monthlyPnLPct / 100) * 100) / 100;
+
+  // --- Daily P&L: last 7 days average (for display consistency) ---
+  const dailyPnlPct = weeklyTrades.length > 0 ? weeklyPnLPct / Math.min(weeklyTrades.length, 7) : 0;
 
   return {
     totalValue: Math.round(totalValue * 100) / 100,
     totalReturn: Math.round(totalPct * 100) / 100,
     dailyPnL: Math.round((baseValue * dailyPnlPct / 100) * 100) / 100,
     dailyPnLPercent: Math.round(dailyPnlPct * 100) / 100,
-    weeklyPnL: Math.round((baseValue * (dailyPnlPct * 5) / 100) * 100) / 100,
-    weeklyPnLPercent: Math.round(dailyPnlPct * 5 * 100) / 100,
-    monthlyPnL: Math.round((baseValue * (dailyPnlPct * 20) / 100) * 100) / 100,
-    monthlyPnLPercent: Math.round(dailyPnlPct * 20 * 100) / 100,
+    weeklyPnL,
+    weeklyPnLPercent: Math.round(weeklyPnLPct * 100) / 100,
+    monthlyPnL,
+    monthlyPnLPercent: Math.round(monthlyPnLPct * 100) / 100,
     winRate: Math.round(winRate * 10) / 10,
     profitFactor: Math.round(profitFactor * 100) / 100,
-    sharpeRatio: 1.5,
-    maxDrawdown: -5.0,
+    sharpeRatio,
+    maxDrawdown,
     activeTrades: openPositions.length,
     closedTrades: closedTrades.length,
     currentStrategy: closedTrades[closedTrades.length - 1]?.strategy || 'v0008',
-    aiStatus: 'active',
+    aiStatus: 'learning',
     tradesAnalyzed: closedTrades.length,
   };
 }
 
-function calcRiskMetrics(openPositions) {
+function calcRiskMetrics(openPositions, metrics, startingBalance) {
+  const baseValue = startingBalance || 100000;
+
+  // Risk score from open position exposure
   const exposureByAsset = {};
   for (const pos of openPositions) {
     exposureByAsset[pos.asset] = (exposureByAsset[pos.asset] || 0) + Math.abs(pos.pnlPercent || 0);
   }
   const total = Object.values(exposureByAsset).reduce((s, v) => s + v, 0) || 1;
+
+  // Current drawdown: from open positions (unrealized P&L)
+  const openPnlPct = openPositions.reduce((s, p) => s + (p.pnlPercent || 0), 0);
+  const currentDrawdown = openPositions.length > 0
+    ? -(openPositions.filter(p => p.pnlPercent < 0).reduce((s, p) => s + Math.abs(p.pnlPercent || 0), 0))
+    : 0;
+
+  // Risk per trade: derived from actual max realized loss across closed trades
+  // (passed via metrics when available, otherwise estimate from open exposure)
+  const riskPerTrade = openPositions.length > 0
+    ? Math.max(...openPositions.map(p => Math.abs(p.pnlPercent || 0)), 0.5)
+    : 1.0;
+
   return {
     riskScore: Math.min(100, Math.round(total * 10)),
-    riskPerTrade: 1.5,
-    maxDrawdown: -3.0,
-    currentDrawdown: openPositions.filter(p => p.pnlPercent < 0).length > 0 ? -1.5 : 0,
+    riskPerTrade,
+    maxDrawdown: metrics?.maxDrawdown ?? 0,
+    currentDrawdown: Math.round(currentDrawdown * 100) / 100,
     exposureByAsset: Object.entries(exposureByAsset).map(([asset, val]) => ({
       asset,
       total: Math.round(val * 10) / 10,
@@ -561,7 +652,7 @@ export async function fetchLiveState(token, includeKnowledge = false) {
 
   const startingBalance = typeof paperAccount?.starting_balance === 'number' ? paperAccount.starting_balance : 100000;
   const metrics = calcMetrics(closedTrades, openPositions, startingBalance);
-  const risk = calcRiskMetrics(openPositions);
+  const risk = calcRiskMetrics(openPositions, metrics, startingBalance);
   const notifications = generateNotifications(closedTrades, openPositions, metrics, null);
   const equityCurveData = calcEquityCurve(closedTrades, startingBalance);
   const evolutionEvents = calcEvolutionEvents(hypotheses);

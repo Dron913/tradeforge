@@ -20,9 +20,9 @@
   max-width: 100%;
 }
 
-/* Wrapper: constrains to container, provides horizontal scroll */
+/* Wrapper: allows timeline to overflow horizontally */
 .timelineSectionInner {
-  width: 100%;
+  min-width: max-content;
 }
 
 /* The timeline row — children are fixed-width, total width grows beyond viewport */

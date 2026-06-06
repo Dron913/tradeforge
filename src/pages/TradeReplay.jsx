@@ -192,6 +192,18 @@ export default function TradeReplay() {
         </div>
 
         <div className={styles.chartContainer}>
+          <div style={{
+            fontSize: 'var(--text-xs)',
+            color: 'var(--text-muted)',
+            background: 'var(--bg-interactive)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-sm)',
+            padding: '4px 8px',
+            marginBottom: 'var(--space-3)',
+            textAlign: 'center'
+          }}>
+            Visualization: synthetic price path (intraday data unavailable)
+          </div>
           {priceData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={priceData}>

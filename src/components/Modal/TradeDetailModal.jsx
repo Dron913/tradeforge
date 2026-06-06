@@ -34,9 +34,17 @@ function formatDuration(secs) {
   return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m` : '<1m'
 }
 
-/** Standard position size per Hermes MAX_POSITION_PCT = 0.25 × starting_balance */
-function getPositionSize() {
-  return 25000
+/**
+ * Derive position size from entry price and quantity.
+ * Falls back to starting balance percentage if quantity unavailable.
+ */
+function getPositionSize(trade, startingBalance = 100000) {
+  // If we have quantity, calculate real value
+  if (trade.quantity && trade.entryPrice) {
+    return trade.entryPrice * trade.quantity;
+  }
+  // If no quantity, derive from 25% of starting balance (Hermes MAX_POSITION_PCT)
+  return startingBalance * 0.25;
 }
 
 function formatSLTP(value) {
@@ -47,7 +55,7 @@ function formatSLTP(value) {
 export function TradeDetailModal({ trade, onClose }) {
   if (!trade) return null
 
-  const POSITION_SIZE = getPositionSize()
+  const POSITION_SIZE = getPositionSize(trade)
   const pnlPercent = trade.pnlPercent || 0
   const pnlUsd = POSITION_SIZE * pnlPercent / 100
   const isProfit = pnlPercent >= 0
@@ -61,7 +69,7 @@ export function TradeDetailModal({ trade, onClose }) {
     { icon: ArrowUpRight, label: 'Entry Price', value: formatCurrency(trade.entryPrice) },
     { icon: ArrowDownRight, label: 'Exit Price', value: formatCurrency(trade.exitPrice) },
     { icon: DollarSign, label: 'Position Size', value: formatCurrency(POSITION_SIZE),
-      note: 'Standard per Hermes rules (25% × $100k starting balance)' },
+      note: trade.quantity ? `${trade.quantity.toFixed(4)} @ ${formatCurrency(trade.entryPrice)}` : 'Derived: 25% × starting balance' },
     { icon: DollarSign, label: 'Capital Deployed', value: formatCurrency(POSITION_SIZE) },
     { icon: DollarSign, label: 'Capital Returned', value: formatCurrency(POSITION_SIZE + pnlUsd) },
     { icon: isProfit ? TrendingUp : TrendingDown, label: 'Profit / Loss (USD)',
@@ -156,7 +164,7 @@ export function PositionDetailModal({ position, onClose }) {
     { icon: ArrowUpRight, label: 'Entry Price', value: formatCurrency(position.entryPrice) },
     { icon: ArrowDownRight, label: 'Current Price', value: formatCurrency(position.currentPrice) },
     { icon: DollarSign, label: 'Position Size', value: formatCurrency(POSITION_SIZE),
-      note: 'Standard per Hermes rules (25% × $100k starting balance)' },
+      note: trade.quantity ? `${trade.quantity.toFixed(4)} @ ${formatCurrency(trade.entryPrice)}` : 'Derived: 25% × starting balance' },
     { icon: DollarSign, label: 'Capital Deployed', value: formatCurrency(POSITION_SIZE) },
     { icon: DollarSign, label: 'Market Value', value: formatCurrency(marketValue) },
     { icon: isProfit ? TrendingUp : TrendingDown, label: 'Unrealized P&L (USD)',

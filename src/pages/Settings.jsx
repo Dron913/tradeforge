@@ -1,31 +1,45 @@
 import { useState } from 'react'
-import { Save, RotateCcw, LogOut, Shield, Lock, Unlock } from 'lucide-react'
-import { useAuth } from '../context/TradingContext'
+import { Save, RotateCcw, LogOut, Shield, Lock, Unlock, Download, Trash2 } from 'lucide-react'
+import { useAuth, useClosedTrades } from '../context/TradingContext'
 import styles from './Settings.module.css'
+
+const SETTINGS_KEY = 'tradeforge_settings'
+const DEFAULT_SETTINGS = {
+  theme: 'dark',
+  accentColor: 'cyan',
+  chartStyle: 'area',
+  compactMode: false,
+  showMiniCharts: true,
+  notifications: {
+    trades: true,
+    strategy: true,
+    risk: true,
+    system: true,
+    email: false,
+    sound: false
+  },
+  defaultPage: 'dashboard',
+  dateFormat: 'MMM D, YYYY',
+  timeFormat: '24h'
+}
 
 export default function Settings() {
   const { authToken, authRequired, logout } = useAuth()
-  const [settings, setSettings] = useState({
-    theme: 'dark',
-    accentColor: 'cyan',
-    chartStyle: 'area',
-    compactMode: false,
-    showMiniCharts: true,
-    notifications: {
-      trades: true,
-      strategy: true,
-      risk: true,
-      system: true,
-      email: false,
-      sound: false
-    },
-    defaultPage: 'dashboard',
-    dateFormat: 'MMM D, YYYY',
-    timeFormat: '24h'
+  const closedTrades = useClosedTrades()
+  const [saved, setSaved] = useState(false)
+
+  const [settings, setSettings] = useState(() => {
+    try {
+      const stored = localStorage.getItem(SETTINGS_KEY)
+      return stored ? { ...DEFAULT_SETTINGS, ...JSON.parse(stored) } : DEFAULT_SETTINGS
+    } catch {
+      return DEFAULT_SETTINGS
+    }
   })
 
   const updateSetting = (key, value) => {
     setSettings(prev => ({ ...prev, [key]: value }))
+    setSaved(false)
   }
 
   const updateNotification = (key, value) => {
@@ -33,6 +47,46 @@ export default function Settings() {
       ...prev,
       notifications: { ...prev.notifications, [key]: value }
     }))
+    setSaved(false)
+  }
+
+  const saveSettings = () => {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (e) {
+      console.error('Failed to save settings:', e)
+    }
+  }
+
+  const exportCSV = () => {
+    if (closedTrades.length === 0) return
+    const headers = ['id', 'asset', 'side', 'entryTime', 'exitTime', 'entryPrice', 'exitPrice', 'quantity', 'pnl', 'pnlPercent', 'exitReason', 'strategy', 'duration', 'mfe_pct', 'mae_pct']
+    const rows = closedTrades.map(t => [
+      t.id, t.asset, t.side, t.entryTime, t.exitTime, t.entryPrice, t.exitPrice,
+      t.quantity, t.pnl, t.pnlPercent, t.exitReason, t.strategy, t.duration, t.mfe_pct, t.mae_pct
+    ].join(','))
+    const csv = [headers.join(','), ...rows].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `tradeforge_trades_${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const clearCache = () => {
+    sessionStorage.clear()
+    localStorage.removeItem('tradeforge_state_cache')
+    window.location.reload()
+  }
+
+  const resetAllSettings = () => {
+    setSettings(DEFAULT_SETTINGS)
+    localStorage.removeItem(SETTINGS_KEY)
+    setSaved(false)
   }
 
   return (
@@ -303,7 +357,8 @@ export default function Settings() {
                 Download all your trading data as CSV
               </div>
             </div>
-            <button className={styles.dangerButton} style={{ borderColor: 'var(--border-default)', color: 'var(--text-secondary)' }}>
+            <button className={styles.dangerButton} style={{ borderColor: 'var(--border-default)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }} onClick={exportCSV}>
+              <Download size={14} />
               Export CSV
             </button>
           </div>
@@ -314,7 +369,8 @@ export default function Settings() {
                 Remove temporary data and refresh the app
               </div>
             </div>
-            <button className={styles.dangerButton} style={{ borderColor: 'var(--border-default)', color: 'var(--text-secondary)' }}>
+            <button className={styles.dangerButton} style={{ borderColor: 'var(--border-default)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }} onClick={clearCache}>
+              <Trash2 size={14} />
               Clear Cache
             </button>
           </div>
@@ -334,7 +390,7 @@ export default function Settings() {
             </div>
             <button
               className={styles.dangerButton}
-              onClick={() => updateSetting('accentColor', 'cyan')}
+              onClick={resetAllSettings}
             >
               Reset
             </button>
@@ -344,16 +400,16 @@ export default function Settings() {
         <div className={styles.versionInfo}>
           <div className={styles.versionNumber}>TradeForge v1.0.0</div>
           <div className={styles.versionCopyright}>AI-Powered Crypto Trading Dashboard</div>
-          <button className={styles.resetBtn}>
+          <button className={styles.resetBtn} onClick={resetAllSettings}>
             <RotateCcw size={14} />
             Reset to factory defaults
           </button>
         </div>
       </div>
 
-      <button className={styles.saveButton}>
+      <button className={styles.saveButton} onClick={saveSettings} style={{ opacity: saved ? 1 : undefined }}>
         <Save size={18} />
-        Save Settings
+        {saved ? 'Saved!' : 'Save Settings'}
       </button>
     </div>
   )

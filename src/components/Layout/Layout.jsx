@@ -15,7 +15,8 @@ import {
   Menu,
   X
 } from 'lucide-react'
-import { notifications } from '../../data/mockData'
+// Notifications sourced from Railway; empty until backend provides real notifications
+const notifications = []
 import styles from './Layout.module.css'
 
 const navItems = [

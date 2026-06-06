@@ -601,54 +601,46 @@ function calcEvolutionEvents(hypotheses) {
 // --- Main Data Fetchers ---
 
 /**
- * Fetch individual files in parallel via Bearer auth
- * (each /debug/file/ endpoint responds in ~2s individually, vs 17-31s for combined /debug/state).
+ * Fetch all state files in a single request.
+ * Uses /debug/state — bypasses Railway edge which intercepts /api/debug/*.
+ * Session token passed as ?token= query param for auth.
+ * Returns { filename: content } map, or throws on error.
  */
-async function fetchFile(name, token) {
-  try {
-    const res = await apiFetchBearer(`/debug/file/${name}`, token);
-    if (!res.ok) return null; // Bearer auth may fail — fall back
-    return await res.text().catch(() => null);
-  } catch {
-    return null;
-  }
+async function fetchStateBundle(token) {
+  const res = await apiFetch('/debug/state', token);
+  if (res.status === 401) throw Object.assign(new Error('unauthorized'), { isAuthError: true });
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  return res.json().catch(() => ({}));
 }
 
 /**
- * Fetch all live state from Railway.
- * Uses Bearer auth for all requests (CORS preflight now passes Auth header).
- * All requests fire in parallel — expected time: ~20-30s (trades.jsonl at 35MB is the bottleneck).
- * Railway egress: ~20 Mbps → 35MB / 2.5 MB/s ≈ 14s for trades + 2s per small file ≈ 20s total.
+ * Fetch all live state from Railway in a single round-trip.
+ * Uses /debug/state endpoint which returns all files as one JSON object.
+ * This avoids the Railway edge intercept problem (edge blocks /api/debug/* and
+ * now /worker/* returns 501) by using the /debug/state path which reaches
+ * the Python health server on port 8080.
  */
 export async function fetchLiveState(token, includeKnowledge = false) {
-  // Fire all file requests in parallel — ALL use Bearer auth (CORS fix in Railway backend)
-  const [statusTxt, heartbeatTxt, hermesTxt, phaseStateTxt, bootstrapTxt,
-         goalTxt, strategyTxt, hypothesesTxt, tradesTxt, knowledgeTxt] = await Promise.all([
-    // JSON state files — Bearer auth (~2s each, all fire in parallel)
-    fetchFile('status.json', token),
-    fetchFile('heartbeat.json', token),
-    fetchFile('hermes_check.json', token),
-    fetchFile('phase_state.json', token),
-    fetchFile('bootstrap_proof.json', token),
-    fetchFile('goal.yaml', token),
-    fetchFile('strategy.yaml', token),
-    // JSONL data files — Bearer auth (~2-15s each, also parallel)
-    fetchFile('hypotheses.jsonl', token),
-    fetchFile('trades.jsonl', token),
-    // Knowledge (optional)
-    includeKnowledge ? fetchFile('knowledge.jsonl', token) : Promise.resolve(''),
-  ]);
+  // Single request to get all state files at once
+  const raw = await fetchStateBundle(token);
 
-  const raw = { 'status.json': statusTxt, 'trades.jsonl': tradesTxt, 'hypotheses.jsonl': hypothesesTxt, 'strategy.yaml': strategyTxt };
+  // Extract each file from the bundle
+  const statusTxt = raw['status.json'] || '';
+  const tradesTxt = raw['trades.jsonl'] || '';
+  const hypothesesTxt = raw['hypotheses.jsonl'] || '';
+  const strategyTxt = raw['strategy.yaml'] || '';
+  const heartbeatTxt = raw['heartbeat.json'] || '';
+  const hermesTxt = raw['hermes_check.json'] || '';
+  const knowledgeTxt = (includeKnowledge ? raw['knowledge.jsonl'] : '') || '';
 
   const statusJson = statusTxt ? (() => { try { return JSON.parse(statusTxt); } catch { return {}; } })() : {};
   const openPositions = parseOpenPositions(statusJson);
-  const closedTrades = parseClosedTrades(tradesTxt || '');
-  const hypotheses = parseHypotheses(hypothesesTxt || '');
-  const strategyVersions = parseStrategy(hypothesesTxt || '', strategyTxt || '');
+  const closedTrades = parseClosedTrades(tradesTxt);
+  const hypotheses = parseHypotheses(hypothesesTxt);
+  const strategyVersions = parseStrategy(hypothesesTxt, strategyTxt);
   const paperAccount = parsePaperAccount(statusJson);
 
-  // Parse health from individual files (no extra request needed)
+  // Parse health from state bundle
   let health = { status: 'online', timestamp: new Date().toISOString(), consecutiveFailures: getConsecutiveFailures() };
   try {
     const hb = heartbeatTxt ? JSON.parse(heartbeatTxt) : {};
@@ -670,8 +662,8 @@ export async function fetchLiveState(token, includeKnowledge = false) {
   const notifications = generateNotifications(closedTrades, openPositions, metrics, null);
   const equityCurveData = calcEquityCurve(closedTrades, startingBalance);
   const evolutionEvents = calcEvolutionEvents(hypotheses);
-  const knowledgeEntries = includeKnowledge ? parseKnowledge(knowledgeTxt || '') : [];
-  const knowledgeSummary = deriveKnowledgeSummary(knowledgeTxt || '');
+  const knowledgeEntries = includeKnowledge ? parseKnowledge(knowledgeTxt) : [];
+  const knowledgeSummary = deriveKnowledgeSummary(knowledgeTxt);
 
   return {
     openPositions,
@@ -698,11 +690,9 @@ export async function fetchLiveState(token, includeKnowledge = false) {
  */
 export async function fetchHealthStatus(token) {
   try {
-    const text = await fetchFile('heartbeat.json', token);
-    if (!text) throw new Error('no response');
-    const hb = JSON.parse(text);
-    const hm = await apiFetchBearer('/debug/file/hermes_check.json', token)
-      .then(r => r.ok ? r.json().catch(() => ({})) : ({}));
+    const raw = await fetchStateBundle(token);
+    const hb = raw['heartbeat.json'] ? JSON.parse(raw['heartbeat.json']) : {};
+    const hm = raw['hermes_check.json'] ? JSON.parse(raw['hermes_check.json']) : {};
     return {
       status: 'online',
       timestamp: hb.timestamp || new Date().toISOString(),

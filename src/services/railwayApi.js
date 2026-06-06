@@ -82,9 +82,15 @@ function apiFetch(path, token) {
  * Fetch a single file with Bearer auth — uses /debug/file/* endpoints,
  * each responds in ~2s via the Python backend (vs 17-31s for combined /debug/state).
  */
+/**
+ * Fetch a single file from the worker.
+ * Uses /worker/file/ path — bypasses Railway edge proxy special handling for /api/debug/*.
+ */
 function apiFetchBearer(path, token) {
-  return fetchWithRetry(`${API_BASE}${path}`, {
-    headers: { Authorization: `Bearer ${token}` },
+  // Railway edge intercepts /api/debug/* → serve "OK" — route around it via /worker/file/
+  const safePath = path.replace('/api/debug/file/', '/worker/file/');
+  return fetchWithRetry(`${API_BASE}${safePath}`, {
+    headers: { Authorization: `Bearer ${token}`, 'Cache-Control': 'no-store' },
   }, token);
 }
 

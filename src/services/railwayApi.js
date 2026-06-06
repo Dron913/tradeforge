@@ -148,7 +148,13 @@ export async function postLogout() {
 function parseOpenPositions(statusData) {
   try {
     const raw = typeof statusData === 'string' ? JSON.parse(statusData) : statusData;
-    const positions = raw.open_positions || [];
+    // Status.json has a flat structure: { open_positions: [...], paper_account: {...} }
+    // Both bootstrap.py (seeded) and StatusWriter.write() (live) write flat, so we
+    // only need to check open_positions at the top level. paper_account.open_positions
+    // does not exist — leave this guard for future-proofing against nested schemas.
+    const positions = raw.open_positions
+      || (raw.paper_account && Array.isArray(raw.paper_account.open_positions) ? raw.paper_account.open_positions : null)
+      || [];
     return positions.map((p, i) => ({
       id: `pos-${Date.now()}-${i}`,
       asset: (p.asset || '').replace('/USDT', ''),

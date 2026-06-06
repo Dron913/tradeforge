@@ -150,7 +150,7 @@ export function TradeDetailModal({ trade, onClose }) {
 export function PositionDetailModal({ position, onClose }) {
   if (!position) return null
 
-  const POSITION_SIZE = getPositionSize()
+  const POSITION_SIZE = getPositionSize(position)
   const pnlPercent = position.pnlPercent || 0
   const unrealizedUsd = POSITION_SIZE * pnlPercent / 100
   const marketValue = POSITION_SIZE * (1 + pnlPercent / 100)
@@ -164,7 +164,7 @@ export function PositionDetailModal({ position, onClose }) {
     { icon: ArrowUpRight, label: 'Entry Price', value: formatCurrency(position.entryPrice) },
     { icon: ArrowDownRight, label: 'Current Price', value: formatCurrency(position.currentPrice) },
     { icon: DollarSign, label: 'Position Size', value: formatCurrency(POSITION_SIZE),
-      note: trade.quantity ? `${trade.quantity.toFixed(4)} @ ${formatCurrency(trade.entryPrice)}` : 'Derived: 25% × starting balance' },
+      note: position.quantity ? `${position.quantity.toFixed(4)} @ ${formatCurrency(position.entryPrice)}` : 'Derived: 25% × starting balance' },
     { icon: DollarSign, label: 'Capital Deployed', value: formatCurrency(POSITION_SIZE) },
     { icon: DollarSign, label: 'Market Value', value: formatCurrency(marketValue) },
     { icon: isProfit ? TrendingUp : TrendingDown, label: 'Unrealized P&L (USD)',

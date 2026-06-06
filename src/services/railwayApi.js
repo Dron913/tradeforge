@@ -5,7 +5,7 @@
  */
 
 const API_BASE = import.meta.env.VITE_RAILWAY_API_URL || 'https://tradeforge-production-fbc1.up.railway.app';
-const REQUEST_TIMEOUT = 45000; // 45s — /debug/state can return 35MB+ taking 15-20s
+const REQUEST_TIMEOUT = 120000; // 120s — trades.jsonl can be 30MB+ taking 30-60s over Railway egress
 
 // Track consecutive failures to help callers know if backend is consistently down
 let _consecutiveFailures = 0;
@@ -86,11 +86,16 @@ function apiFetch(path, token) {
  * Fetch a single file from the worker.
  * Uses /worker/file/ path — bypasses Railway edge proxy special handling for /api/debug/*.
  */
+/**
+ * Fetch a single file from the worker.
+ * Uses ?token= query param (not Bearer header) — avoids CORS preflight when backend
+ * doesn't configure Access-Control-Allow-Headers: Authorization.
+ */
 function apiFetchBearer(path, token) {
-  // Railway edge intercepts /api/debug/* → serve "OK" — route around it via /worker/file/
+  const separator = path.includes('?') ? '&' : '?';
   const safePath = path.replace('/api/debug/file/', '/worker/file/');
-  return fetchWithRetry(`${API_BASE}${safePath}`, {
-    headers: { Authorization: `Bearer ${token}`, 'Cache-Control': 'no-store' },
+  return fetchWithRetry(`${API_BASE}${safePath}${separator}token=${encodeURIComponent(token)}`, {
+    headers: { 'Cache-Control': 'no-store' },
   }, token);
 }
 
